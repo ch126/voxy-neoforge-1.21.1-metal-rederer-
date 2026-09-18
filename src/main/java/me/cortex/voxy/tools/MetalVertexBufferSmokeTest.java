@@ -149,7 +149,7 @@ public final class MetalVertexBufferSmokeTest {
             }
 
             System.out.println();
-            System.out.println("M9-prep SMOKE OK — VertexLayout + bindVertexBuffer + drawIndirect on Apple M4 Max");
+            System.out.println("M9-prep SMOKE OK — VertexLayout + bindVertexBuffer + drawIndirect on Apple Silicon");
         } finally {
             if (pipeline != null) pipeline.close();
             backend.shutdown();
