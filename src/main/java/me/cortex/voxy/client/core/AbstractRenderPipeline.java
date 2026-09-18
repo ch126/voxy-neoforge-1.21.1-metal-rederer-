@@ -115,7 +115,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     private int metalDepthHeight;
     /** Animation counter for the placeholder Metal render — replaced by real Voxy output incrementally. */
     private static final boolean METAL_DIAGNOSTICS =
-            "1".equals(System.getenv("VOXY_METAL_DIAGNOSTICS"));
+            "1".equals(System.getenv("VOXY_METAL_DIAGNOSTICS"))
+                    || Boolean.getBoolean("voxy.metalDiagnostics");
     /**
      * Experimental real MC-depth HiZ path. The mseries reference keeps this
      * opt-in because populated HiZ caused a horizon-culling regression; the
@@ -383,7 +384,15 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         // render pass starts. submit() is synchronous in this backend.
         backend.submit();
 
-        if (METAL_DIAGNOSTICS && this.metalFrame % 600 == 300
+        // Always emit a small startup telemetry window. A healthy bridge can
+        // keep compositing forever even when traversal, geometry generation,
+        // or indirect command generation produced no LOD draw calls. These
+        // ten low-frequency samples make that failure visible in ordinary
+        // launcher logs without requiring environment-variable support.
+        boolean startupTelemetry = this.metalFrame >= 300
+                && this.metalFrame <= 5700
+                && this.metalFrame % 600 == 300;
+        if ((METAL_DIAGNOSTICS || startupTelemetry)
                 && viewport instanceof me.cortex.voxy.client.core.rendering.section.backend.mdic.MDICViewport mv) {
             int renderSections = -1;
             int opaque = -1;
