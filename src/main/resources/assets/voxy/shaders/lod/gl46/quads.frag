@@ -199,10 +199,17 @@ void main() {
 //This is deprecated, TODO: remove the non mip code path
     //if (useMipmaps())
     {
+#ifdef VOXY_LOD_FIXED_MIP
+        // The Metal backend's derivative-based choice tends to collapse to
+        // the smallest atlas mip on distant/small quads. Keep the GL path
+        // unchanged and give Metal a stable detailed sample.
+        colour = textureLod(blockModelAtlas, texPos, 0.0);
+#else
         vec2 uvSmol = uv*(1.0/(vec2(3.0,2.0)*256.0));
         vec2 dx = dFdx(uvSmol);//vec2(lDx, dDx);
         vec2 dy = dFdy(uvSmol);//vec2(lDy, dDy);
         colour = textureGrad(blockModelAtlas, texPos, dx, dy);
+#endif
     }// else {
     //    colour = textureLod(blockModelAtlas, texPos, 0);
     //}

@@ -255,6 +255,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                 }
                 opaqueDefines.put("VOXY_METAL_BI_FIX", "");
                 translucentDefines.put("VOXY_METAL_BI_FIX", "");
+                // SPIR-V/MSL derivatives on Voxy's small, distant quads can
+                // select the atlas' coarsest mip and flatten a whole face to
+                // its average colour. Match the proven mseries Metal default:
+                // sample mip 0 unless explicitly opted out for comparison.
+                String fixedMipEnv = System.getenv("VOXY_LOD_FIXED_MIP");
+                boolean fixedMip = fixedMipEnv == null || !"0".equals(fixedMipEnv.trim());
+                if (fixedMip) {
+                    opaqueDefines.put("VOXY_LOD_FIXED_MIP", "");
+                    translucentDefines.put("VOXY_LOD_FIXED_MIP", "");
+                }
                 if ("1".equals(System.getenv("VOXY_BAKERY_OFF"))) {
                     opaqueDefines.put("VOXY_NO_ATLAS", "");
                     translucentDefines.put("VOXY_NO_ATLAS", "");
