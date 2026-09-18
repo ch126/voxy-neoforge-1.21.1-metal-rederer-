@@ -162,6 +162,20 @@ neoForge {
         minecraftVersion = project.minecraft_version
         mappingsVersion = "2024.11.17"
     }
+
+    runs {
+        client {
+            client()
+            gameDirectory = project.file('run')
+            systemProperty 'forge.logging.console.level', 'info'
+        }
+    }
+
+    mods {
+        voxy {
+            sourceSet sourceSets.main
+        }
+    }
 }
 
 def modRuntimeOnlyMsk = {arg->}
@@ -481,6 +495,9 @@ dependencies {
     // Add to runtime classpath for MC 1.21.1 (not needed for 1.21.9+)
     additionalRuntimeClasspath "org.lwjgl:lwjgl-lmdb:$lwjglVersion"
     additionalRuntimeClasspath "org.lwjgl:lwjgl-zstd:$lwjglVersion"
+    additionalRuntimeClasspath "org.lwjgl:lwjgl-shaderc:$lwjglVersion"
+    additionalRuntimeClasspath "org.lwjgl:lwjgl-spvc:$lwjglVersion"
+    additionalRuntimeClasspath "org.lwjgl:lwjgl-vulkan:$lwjglVersion"
     // Natives also need to be on runtime classpath (LWJGL extracts from classpath)
     additionalRuntimeClasspath "org.lwjgl:lwjgl-lmdb:$lwjglVersion:natives-windows"
     additionalRuntimeClasspath "org.lwjgl:lwjgl-zstd:$lwjglVersion:natives-windows"
@@ -507,6 +524,9 @@ dependencies {
             prefer '10.2.1'
         }
     }
+    // ModDev runs do not consume the nested JarJar artifact; expose the same
+    // implementation directly to the development runtime.
+    additionalRuntimeClasspath 'org.rocksdb:rocksdbjni:10.2.1'
 
     // LZ4 - PROVIDED by Minecraft runtime (do NOT bundle - causes module conflict)
     implementation 'org.lz4:lz4-java:1.8.0'
