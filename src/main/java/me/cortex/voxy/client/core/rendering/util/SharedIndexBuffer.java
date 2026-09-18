@@ -12,6 +12,8 @@ public class SharedIndexBuffer {
     public static final SharedIndexBuffer INSTANCE = new SharedIndexBuffer();
     public static final SharedIndexBuffer INSTANCE_BYTE = new SharedIndexBuffer(true);
     public static final SharedIndexBuffer INSTANCE_BB_BYTE = new SharedIndexBuffer(true, true);
+    /** 32 cube batches using uint16 indices; Metal has no uint8 index type. */
+    public static final SharedIndexBuffer INSTANCE_BB_SHORT = new SharedIndexBuffer(true, true, true);
 
     private final IGpuBuffer indexBuffer;
 
@@ -45,6 +47,15 @@ public class SharedIndexBuffer {
     private SharedIndexBuffer(boolean type2, boolean type3) {
         this.indexBuffer = RenderBackendFactory.get().createBuffer(6*2*3*(256/8));
         var cubeBuff = generateByteCubesIndexBuffer(256/8);
+
+        cubeBuff.cpyTo(UploadStream.INSTANCE.upload(this.indexBuffer, 0, this.indexBuffer.size()));
+        UploadStream.INSTANCE.commit();
+        cubeBuff.free();
+    }
+
+    private SharedIndexBuffer(boolean type2, boolean type3, boolean type4) {
+        this.indexBuffer = RenderBackendFactory.get().createBuffer(6*2*3*(256/8)*2);
+        var cubeBuff = generateShortCubesIndexBuffer(256/8);
 
         cubeBuff.cpyTo(UploadStream.INSTANCE.upload(this.indexBuffer, 0, this.indexBuffer.size()));
         UploadStream.INSTANCE.commit();
@@ -165,6 +176,29 @@ public class SharedIndexBuffer {
         }
 
         return buffer;
+    }
+
+    private static MemoryBuffer generateShortCubesIndexBuffer(int cnt) {
+        var bytes = new MemoryBuffer((long) cnt * 6 * 2 * 3 * 2);
+        long ptr = bytes.address;
+        MemoryUtil.memSet(ptr, 0, bytes.size);
+
+        for (int i = 0; i < cnt; i++) {
+            int base = i * 8;
+            int[] indices = {
+                    0, 1, 2, 3, 2, 1,
+                    6, 5, 4, 5, 6, 7,
+                    0, 4, 1, 5, 1, 4,
+                    3, 6, 2, 6, 3, 7,
+                    2, 4, 0, 4, 2, 6,
+                    1, 5, 3, 7, 3, 5
+            };
+            for (int index : indices) {
+                MemoryUtil.memPutShort(ptr, (short) (base + index));
+                ptr += 2;
+            }
+        }
+        return bytes;
     }
 
     public static MemoryBuffer generateQuadIndicesByte(int quadCount) {

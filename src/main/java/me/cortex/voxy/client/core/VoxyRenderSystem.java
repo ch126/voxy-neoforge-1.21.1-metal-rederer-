@@ -258,6 +258,12 @@ public class VoxyRenderSystem {
                 != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
             // Metal owns its state and renders into the IOSurface bridge.
             this.pipeline.preSetup(viewport);
+            if (!VoxyClient.disableSodiumChunkRender()) {
+                this.chunkBoundRenderer.renderMetal(viewport,
+                        me.cortex.voxy.client.core.gpu.RenderBackendFactory.get());
+            } else {
+                this.chunkBoundRenderer.clearMetal(viewport);
+            }
             this.pipeline.runPipeline(viewport, 0, viewport.width, viewport.height);
 
             // Keep the renderer's CPU-side lifecycle advancing on Metal as

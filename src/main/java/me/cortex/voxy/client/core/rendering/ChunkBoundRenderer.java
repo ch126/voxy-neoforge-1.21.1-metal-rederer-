@@ -11,11 +11,15 @@ import me.cortex.voxy.client.core.gpu.GraphicsPipelineDesc;
 import me.cortex.voxy.client.core.gpu.IGpuBuffer;
 import me.cortex.voxy.client.core.gpu.IGpuPipeline;
 import me.cortex.voxy.client.core.gpu.PipelineState;
+import me.cortex.voxy.client.core.gpu.RenderBackend;
 import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
+import me.cortex.voxy.client.core.gpu.RenderEncoder;
+import me.cortex.voxy.client.core.gpu.RenderPassDesc;
 import me.cortex.voxy.client.core.gpu.VertexLayout;
 import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
 import me.cortex.voxy.common.Logger;
+import me.cortex.voxy.common.util.JomlMemory;
 import net.minecraft.client.Minecraft;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -24,8 +28,6 @@ import org.lwjgl.system.MemoryUtil;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import static org.lwjgl.opengl.ARBDirectStateAccess.glCopyNamedBufferSubData;
-import static org.lwjgl.opengl.GL11.GL_RGBA8;
 import static org.lwjgl.opengl.GL11.GL_TRIANGLES;
 import static org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE;
 import static org.lwjgl.opengl.GL11C.GL_CCW;
@@ -108,13 +110,17 @@ public class ChunkBoundRenderer {
         Map<String, String> defines = new LinkedHashMap<>();
         if (taa != null) defines.put("TAA", "");
 
+        PipelineState depthOnlyState = new PipelineState(
+                new PipelineState.DepthState(true, true, PipelineState.CompareOp.GREATER),
+                PipelineState.BlendState.OPAQUE,
+                PipelineState.RasterState.NO_CULL);
         this.rasterPipeline = RenderBackendFactory.get().createGraphicsPipeline(new GraphicsPipelineDesc(
                 vert, frag, defines,
                 null, null,           // no MSL — runtime compiler produces on Metal
                 null, null,           // no SPIRV — runtime compiler produces on Vulkan
-                GL_RGBA8,             // color format — unused; render path uses the depth bounding FBO directly
+                0,                    // depth-only pass
                 VertexLayout.EMPTY,   // gl_VertexID + gl_InstanceID + gl_BaseInstance drive the math
-                PipelineState.DEFAULT,// caller manages depth/cull/winding via raw GL around the draw
+                depthOnlyState,       // GL path still manages its raw state below
                 "ChunkBoundRenderer.raster"));
         this.glProgram = (this.rasterPipeline instanceof GlGraphicsPipeline gp) ? gp.program() : 0;
     }
@@ -141,51 +147,8 @@ public class ChunkBoundRenderer {
 
     //Bind and render, changing as little gl state as possible so that the caller may configure how it wants to render
     public void render(Viewport<?> viewport) {
-        // Process delayed removals - rotate to next slot and move oldest entries to remQueue
-        int oldestSlot = (this.delayQueueIndex + 1) % REMOVAL_DELAY_FRAMES;
-        LongArrayList oldestQueue = this.delayedRemovalQueue[oldestSlot];
-        if (!oldestQueue.isEmpty()) {
-            for (int i = 0; i < oldestQueue.size(); i++) {
-                this.remQueue.add(oldestQueue.getLong(i));
-            }
-            oldestQueue.clear();
-        }
-        this.delayQueueIndex = oldestSlot;
-
-        if (!this.remQueue.isEmpty()) {
-            boolean wasEmpty = this.chunk2idx.isEmpty();
-            this.remQueue.forEach(this::_remPos);
-            this.remQueue.clear();
-            if (!wasEmpty) UploadStream.INSTANCE.commit();
-        }
-
-        {
-            //Uniform buffer push
-            long ptr = UploadStream.INSTANCE.upload(this.uniformBuffer, 0, 128);
-            long matPtr = ptr;
-            new Matrix4f(viewport.projection).mul(viewport.modelView).getToAddress(ptr); ptr += 4 * 4 * 4;
-
-            int sx = net.minecraft.util.Mth.floor(viewport.cameraX) & ~31;
-            int sy = net.minecraft.util.Mth.floor(viewport.cameraY) & ~31;
-            int sz = net.minecraft.util.Mth.floor(viewport.cameraZ) & ~31;
-            MemoryUtil.memPutInt(ptr, sx); ptr += 4;
-            MemoryUtil.memPutInt(ptr, sy); ptr += 4;
-            MemoryUtil.memPutInt(ptr, sz); ptr += 4;
-            float renderDistance = Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 20 * 16);
-
-            var negInnerSec = new Vector3f(
-                    (float) (viewport.cameraX - sx),
-                    (float) (viewport.cameraY - sy),
-                    (float) (viewport.cameraZ - sz));
-
-            negInnerSec.getToAddress(ptr); ptr += 4 * 3;
-            viewport.MVP.translate(negInnerSec.negate(), new Matrix4f()).getToAddress(matPtr);
-            MemoryUtil.memPutFloat(ptr, renderDistance); ptr += 4;
-
-            // LOD boundary buffer - configurable overlap to prevent pop-in
-            MemoryUtil.memPutInt(ptr, VoxyConfig.CONFIG.lodBoundaryBuffer); ptr += 4;
-        }
-        UploadStream.INSTANCE.commit();
+        this.processPendingRemovals();
+        this.uploadSceneUniform(viewport);
 
 
         {
@@ -237,6 +200,113 @@ public class ChunkBoundRenderer {
         }
     }
 
+    private void processPendingRemovals() {
+        int oldestSlot = (this.delayQueueIndex + 1) % REMOVAL_DELAY_FRAMES;
+        LongArrayList oldestQueue = this.delayedRemovalQueue[oldestSlot];
+        for (int i = 0; i < oldestQueue.size(); i++) {
+            this.remQueue.add(oldestQueue.getLong(i));
+        }
+        oldestQueue.clear();
+        this.delayQueueIndex = oldestSlot;
+
+        if (!this.remQueue.isEmpty()) {
+            boolean wasEmpty = this.chunk2idx.isEmpty();
+            this.remQueue.forEach(this::_remPos);
+            this.remQueue.clear();
+            if (!wasEmpty) UploadStream.INSTANCE.commit();
+        }
+    }
+
+    /** Packs outline.vsh's std140 block at explicit offsets. */
+    private void uploadSceneUniform(Viewport<?> viewport) {
+        long ptr = UploadStream.INSTANCE.upload(this.uniformBuffer, 0, 128);
+        MemoryUtil.memSet(ptr, 0, 128);
+
+        int sx = net.minecraft.util.Mth.floor(viewport.cameraX) & ~31;
+        int sy = net.minecraft.util.Mth.floor(viewport.cameraY) & ~31;
+        int sz = net.minecraft.util.Mth.floor(viewport.cameraZ) & ~31;
+        MemoryUtil.memPutInt(ptr + 64, sx);
+        MemoryUtil.memPutInt(ptr + 68, sy);
+        MemoryUtil.memPutInt(ptr + 72, sz);
+        MemoryUtil.memPutInt(ptr + 76, this.chunk2idx.size());
+
+        var negInnerSec = new Vector3f(
+                (float) (viewport.cameraX - sx),
+                (float) (viewport.cameraY - sy),
+                (float) (viewport.cameraZ - sz));
+        JomlMemory.put(negInnerSec, ptr + 80);
+        float renderDistance = Math.max(Minecraft.getInstance().gameRenderer.getRenderDistance(), 20 * 16);
+        MemoryUtil.memPutFloat(ptr + 92, renderDistance);
+        MemoryUtil.memPutInt(ptr + 96, VoxyConfig.CONFIG.lodBoundaryBuffer);
+
+        var mvp = viewport.MVP.translate(new Vector3f(negInnerSec).negate(), new Matrix4f());
+        JomlMemory.put(mvp, ptr);
+        UploadStream.INSTANCE.commit();
+    }
+
+    /** Render the loaded-chunk AABB mask into a Metal depth attachment. */
+    public void renderMetal(Viewport<?> viewport, RenderBackend backend) {
+        if (viewport.width <= 0 || viewport.height <= 0) return;
+        this.processPendingRemovals();
+        this.uploadSceneUniform(viewport);
+
+        int count = this.chunk2idx.size();
+        try (RenderEncoder encoder = backend.beginRenderPass(boundDepthPass(viewport))) {
+            if (count > 0) {
+                encoder.setPipeline(this.rasterPipeline);
+                encoder.setViewport(0, 0, viewport.width, viewport.height, 0, 1);
+                encoder.setBuffer(SCENE_UNIFORM_BINDING, this.uniformBuffer, 0);
+                encoder.setBuffer(CHUNK_POS_BINDING, this.chunkPosBuffer, 0);
+                encoder.bindIndexBuffer(SharedIndexBuffer.INSTANCE_BB_SHORT.getBuffer(),
+                        RenderEncoder.INDEX_TYPE_UINT16, 0);
+                encoder.drawIndexed(RenderEncoder.PRIMITIVE_TRIANGLES,
+                        6 * 2 * 3 * 32, (count + 31) / 32, 0, 0, 0);
+            }
+        }
+
+        if (!this.addQueue.isEmpty()) {
+            this.addQueue.forEach(this::_addPos);
+            this.addQueue.clear();
+            UploadStream.INSTANCE.commit();
+        }
+        exportBoundMaskMetal(viewport, backend);
+    }
+
+    /** Clear the Metal mask when vanilla chunks are intentionally disabled. */
+    public void clearMetal(Viewport<?> viewport) {
+        if (viewport.width <= 0 || viewport.height <= 0) return;
+        RenderBackend backend = RenderBackendFactory.get();
+        try (RenderEncoder ignored = backend.beginRenderPass(boundDepthPass(viewport))) {
+            // Clear is performed by the render-pass load action.
+        }
+        exportBoundMaskMetal(viewport, backend);
+    }
+
+    private static RenderPassDesc boundDepthPass(Viewport<?> viewport) {
+        return RenderPassDesc.builder(viewport.width, viewport.height)
+                .depthAttachment(viewport.depthBoundingBuffer.getDepthTex(), 0,
+                        RenderPassDesc.LoadAction.CLEAR,
+                        RenderPassDesc.StoreAction.STORE, 0.0f)
+                .build();
+    }
+
+    private static void exportBoundMaskMetal(Viewport<?> viewport, RenderBackend backend) {
+        if (!(backend instanceof me.cortex.voxy.client.core.metal.MetalRenderBackend mrb)) return;
+
+        long size = 16L + (long) viewport.width * viewport.height * Float.BYTES;
+        IGpuBuffer buffer = viewport.metalBoundReadBuffer;
+        if (buffer == null || buffer.size() != size) {
+            if (buffer != null) buffer.free();
+            buffer = backend.createBuffer(size);
+            viewport.metalBoundReadBuffer = buffer;
+            MemoryUtil.memPutInt(
+                    ((me.cortex.voxy.client.core.metal.MetalBuffer) buffer).getContentsPtr(),
+                    viewport.width);
+        }
+        mrb.copyTextureToBuffer(viewport.depthBoundingBuffer.getDepthTex(), buffer,
+                viewport.width, viewport.height, 16);
+    }
+
     private void _remPos(long pos) {
         int idx = this.chunk2idx.remove(pos);
         if (idx == -1) {
@@ -285,7 +355,7 @@ public class ChunkBoundRenderer {
         Logger.info("Resizing chunk position buffer to: " + size);
         var old = this.chunkPosBuffer;
         this.chunkPosBuffer = RenderBackendFactory.get().createBuffer(size * 8L);
-        glCopyNamedBufferSubData(old.id(), this.chunkPosBuffer.id(), 0, 0, old.size());
+        RenderBackendFactory.get().copyBufferSubData(old, this.chunkPosBuffer, 0, 0, old.size());
         old.free();
         var old2 = this.idx2chunk;
         this.idx2chunk = new long[size];

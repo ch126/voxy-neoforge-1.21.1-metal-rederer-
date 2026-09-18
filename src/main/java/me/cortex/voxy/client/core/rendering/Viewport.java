@@ -15,6 +15,13 @@ public abstract class Viewport <A extends Viewport<A>> {
     //public final HiZBuffer2 hiZBuffer = new HiZBuffer2();
     public final HiZBuffer hiZBuffer = new HiZBuffer();
     public final DepthFramebuffer depthBoundingBuffer = new DepthFramebuffer();
+    /**
+     * Metal-only raw-float copy of {@link #depthBoundingBuffer}. Sampling a
+     * depth texture through SPIRV-Cross's texture2d&lt;float&gt; declaration reads
+     * zero on Apple GPUs, so the terrain fragment shader consumes this SSBO.
+     * Layout: uint width + 12 padding bytes + width*height float depths.
+     */
+    public IGpuBuffer metalBoundReadBuffer;
 
     private static final Field planesField;
     static {
@@ -61,6 +68,10 @@ public abstract class Viewport <A extends Viewport<A>> {
     protected void delete0() {
         this.hiZBuffer.free();
         this.depthBoundingBuffer.free();
+        if (this.metalBoundReadBuffer != null) {
+            this.metalBoundReadBuffer.free();
+            this.metalBoundReadBuffer = null;
+        }
     }
 
     public A setVanillaProjection(Matrix4fc projection) {

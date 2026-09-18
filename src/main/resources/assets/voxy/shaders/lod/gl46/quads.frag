@@ -15,6 +15,19 @@
 layout(binding = 0) uniform sampler2D blockModelAtlas;
 layout(binding = 2) uniform sampler2D depthTex;
 
+#ifdef VOXY_METAL_BOUND_SSBO
+// Metal depth-format textures sampled through SPIRV-Cross's ordinary
+// texture2d<float> declaration read zeros on Apple GPUs. ChunkBoundRenderer
+// therefore exports the D32F mask to this raw-float buffer after its pass.
+layout(binding = 9, std430) readonly restrict buffer BoundDepthBuffer {
+    uint boundWidth;
+    uint _boundPad1;
+    uint _boundPad2;
+    uint _boundPad3;
+    float boundDepths[];
+};
+#endif
+
 //#define DEBUG_RENDER
 
 //TODO: need to fix when merged quads have discardAlpha set to false but they span multiple tiles
@@ -213,9 +226,19 @@ void main() {
 
 #ifndef VOXY_NO_DEPTH_BOUND
     //Check the minimum bounding texture and ensure we are greater than it
-    if (gl_FragCoord.z < texelFetch(depthTex, ivec2(gl_FragCoord.xy), 0).r) {
+    #ifdef VOXY_METAL_BOUND_SSBO
+    float voxyBoundDepth = boundDepths[uint(gl_FragCoord.y) * boundWidth + uint(gl_FragCoord.x)];
+    #else
+    float voxyBoundDepth = texelFetch(depthTex, ivec2(gl_FragCoord.xy), 0).r;
+    #endif
+    if (gl_FragCoord.z < voxyBoundDepth) {
+        #ifdef VOXY_BOUND_DEBUG
+        outColour = vec4(1.0, 0.0, 0.0, 1.0);
+        return;
+        #else
         discard;
         return;
+        #endif
     }
 #endif
 

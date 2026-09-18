@@ -366,6 +366,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             int opaque = -1;
             int translucent = -1;
             int temporal = -1;
+            int boundNonZeroSamples = -1;
+            float boundMax = 0.0f;
             if (mv.getRenderList() instanceof me.cortex.voxy.client.core.metal.MetalBuffer list) {
                 renderSections = org.lwjgl.system.MemoryUtil.memGetInt(list.getContentsPtr());
             }
@@ -375,11 +377,24 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                 translucent = org.lwjgl.system.MemoryUtil.memGetInt(address + 16);
                 temporal = org.lwjgl.system.MemoryUtil.memGetInt(address + 20);
             }
+            if (viewport.metalBoundReadBuffer instanceof me.cortex.voxy.client.core.metal.MetalBuffer bound) {
+                long address = bound.getContentsPtr() + 16;
+                int pixels = viewport.width * viewport.height;
+                boundNonZeroSamples = 0;
+                // Diagnostics only: sample one pixel per 64 to confirm the
+                // depth pass and texture-to-buffer blit contain real data.
+                for (int i = 0; i < pixels; i += 64) {
+                    float depth = org.lwjgl.system.MemoryUtil.memGetFloat(address + (long) i * Float.BYTES);
+                    if (depth > 0.0f && Float.isFinite(depth)) boundNonZeroSamples++;
+                    if (depth > boundMax && Float.isFinite(depth)) boundMax = depth;
+                }
+            }
             Logger.info("Metal LOD: topNodes=" + this.traversal.getTopNodeCount()
                     + ", activeSections=" + this.nodeManager.getActiveSectionCount()
                     + ", geometrySections=" + this.nodeManager.getGeometrySectionCount()
                     + ", renderSections=" + renderSections
-                    + ", draws=" + opaque + "/" + translucent + "/" + temporal);
+                    + ", draws=" + opaque + "/" + translucent + "/" + temporal
+                    + ", boundSamples=" + boundNonZeroSamples + ", boundMax=" + boundMax);
         }
 
         // 5) Render pass against bridge color + Voxy-owned depth. Clears both

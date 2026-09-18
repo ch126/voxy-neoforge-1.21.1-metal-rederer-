@@ -111,8 +111,11 @@ public final class ShaderCompilerSmokeTest {
                 new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT, empty,
                         "lod/gl46/quads.frag (MDIC terrain — non-Iris baseline; PATCHED_SHADER undef)"),
                 new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
+                        Map.of("VOXY_METAL_BOUND_SSBO", ""),
+                        "lod/gl46/quads.frag (Metal — SSBO chunk-bound mask)"),
+                new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
                         Map.of("VOXY_NO_DEPTH_BOUND", ""),
-                        "lod/gl46/quads.frag (Metal — real atlas, depth import pending)"),
+                        "lod/gl46/quads.frag (Metal — depth-bound kill switch)"),
                 // Runtime kill switch retained for isolating bakery failures.
                 new ShaderCase("lod/gl46/quads.frag", RuntimeShaderCompiler.Stage.FRAGMENT,
                         Map.of("VOXY_NO_ATLAS", "", "VOXY_NO_DEPTH_BOUND", ""),

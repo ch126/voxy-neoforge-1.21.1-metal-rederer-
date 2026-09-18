@@ -241,10 +241,18 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             java.util.Map<String, String> translucentDefines = new java.util.LinkedHashMap<>(commonDefines);
             translucentDefines.put("TRANSLUCENT", "");
             if (this.backend.getType() != BackendType.OPENGL) {
-                // MC depth is not shared with Metal yet. Keep only that test
-                // disabled; the Metal bakery now supplies the real model atlas.
-                opaqueDefines.put("VOXY_NO_DEPTH_BOUND", "");
-                translucentDefines.put("VOXY_NO_DEPTH_BOUND", "");
+                boolean noDepthBound = "1".equals(System.getenv("VOXY_NO_DEPTH_BOUND"));
+                if (noDepthBound) {
+                    opaqueDefines.put("VOXY_NO_DEPTH_BOUND", "");
+                    translucentDefines.put("VOXY_NO_DEPTH_BOUND", "");
+                } else {
+                    opaqueDefines.put("VOXY_METAL_BOUND_SSBO", "");
+                    translucentDefines.put("VOXY_METAL_BOUND_SSBO", "");
+                }
+                if (!noDepthBound && "1".equals(System.getenv("VOXY_BOUND_DEBUG"))) {
+                    opaqueDefines.put("VOXY_BOUND_DEBUG", "");
+                    translucentDefines.put("VOXY_BOUND_DEBUG", "");
+                }
                 opaqueDefines.put("VOXY_METAL_BI_FIX", "");
                 translucentDefines.put("VOXY_METAL_BI_FIX", "");
                 if ("1".equals(System.getenv("VOXY_BAKERY_OFF"))) {
@@ -520,6 +528,9 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         this.modelStore.bindBuffers(encoder, 3, 4, 0);
         encoder.setBuffer(5, viewport.positionScratchBuffer, 0);
         LightMapHelper.bindMetal(encoder, 1, viewport.frameId);
+        if (viewport.metalBoundReadBuffer != null) {
+            encoder.setBuffer(9, viewport.metalBoundReadBuffer, 0);
+        }
 
         encoder.bindIndexBuffer(me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer.INSTANCE.getBuffer(),
                 me.cortex.voxy.client.core.gpu.RenderEncoder.INDEX_TYPE_UINT16, 0);

@@ -53,6 +53,13 @@ vec2 getTAA();
 void main() {
     uint id = (gl_InstanceID<<5)+gl_BaseInstance+(gl_VertexID>>3);
 
+    // Metal draws ceil(count/32) complete batches because uint8 indices are
+    // unavailable and a separate base-instance tail draw is unreliable.
+    if (id >= uint(section.w)) {
+        gl_Position = vec4(-100.0f, -100.0f, -100.0f, 0.0f);
+        return;
+    }
+
     ivec3 origin = unpackPos(chunkPos[id])*16;
     origin -= section.xyz;
 
