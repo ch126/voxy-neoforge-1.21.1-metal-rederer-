@@ -49,6 +49,18 @@ public abstract class MixinDefaultChunkRenderer extends ShaderChunkRenderer {
         this.doRender(matrices, renderPass, camera);
     }
 
+    // Voxy renders at SOLID HEAD, before Sodium has populated MC's depth.
+    // Capture at TAIL so the Metal path can build a temporal HiZ pyramid from
+    // real near-terrain depth on the following frame.
+    @Inject(method = "render", at = @At(value = "TAIL"))
+    private void captureDepthAfterSolid(ChunkRenderMatrices matrices, CommandList commandList,
+                                        ChunkRenderListIterable renderLists, TerrainRenderPass renderPass,
+                                        CameraTransform camera, CallbackInfo ci) {
+        if (renderPass != DefaultTerrainRenderPasses.SOLID) return;
+        var renderer = ((IGetVoxyRenderSystem) Minecraft.getInstance().levelRenderer).getVoxyRenderSystem();
+        if (renderer != null) renderer.captureMetalDepthAfterSolid();
+    }
+
     @Unique
     private void doRender(ChunkRenderMatrices matrices, TerrainRenderPass renderPass, CameraTransform camera) {
         if (renderPass == DefaultTerrainRenderPasses.SOLID) {

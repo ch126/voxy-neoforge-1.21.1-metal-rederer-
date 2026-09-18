@@ -17,6 +17,7 @@ import me.cortex.voxy.client.core.gpu.VertexLayout;
 import static org.lwjgl.opengl.GL11C.GL_DEPTH_COMPONENT;
 import static org.lwjgl.opengl.GL11C.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL30C.GL_DEPTH24_STENCIL8;
+import static org.lwjgl.opengl.GL30C.GL_DEPTH_COMPONENT32F;
 import static org.lwjgl.opengl.GL30C.GL_DEPTH_ATTACHMENT;
 import static org.lwjgl.opengl.GL12C.GL_TEXTURE_BASE_LEVEL;
 import static org.lwjgl.opengl.GL12C.GL_TEXTURE_MAX_LEVEL;
@@ -62,9 +63,12 @@ public class HiZBuffer {
     private int levels;
     private int width;
     private int height;
+    private IGpuTexture[] selfViews;
 
     public HiZBuffer() {
-        this(GL_DEPTH24_STENCIL8);
+        this(RenderBackendFactory.get().getType()
+                == me.cortex.voxy.client.core.gpu.BackendType.OPENGL
+                ? GL_DEPTH24_STENCIL8 : GL_DEPTH_COMPONENT32F);
     }
 
     public HiZBuffer(int type) {
@@ -89,6 +93,8 @@ public class HiZBuffer {
 
     private void alloc(int width, int height) {
         this.levels = (int) Math.ceil(Math.log(Math.max(width, height)) / Math.log(2));
+
+        this.freeSelfViews();
 
         this.texture = this.backend.createTexture()
                 .store(this.type, this.levels, width, height)
@@ -118,6 +124,30 @@ public class HiZBuffer {
                 this.texture = null;
             }
             this.alloc(targetW, targetH);
+            if (this.backend.getType() != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+                this.zeroFillPyramid();
+            }
+        }
+    }
+
+    /**
+     * Metal texture contents are undefined after allocation. HOT treats
+     * zero depth as "no occluder", so initialize every mip explicitly.
+     */
+    private void zeroFillPyramid() {
+        int cw = this.width;
+        int ch = this.height;
+        for (int i = 0; i < this.levels; i++) {
+            try (RenderEncoder ignored = this.backend.beginRenderPass(
+                    RenderPassDesc.builder(cw, ch)
+                            .depthAttachment(this.texture, i,
+                                    RenderPassDesc.LoadAction.CLEAR,
+                                    RenderPassDesc.StoreAction.STORE, 0.0f)
+                            .build())) {
+                // Clear is performed by the render-pass load action.
+            }
+            cw = Math.max(cw / 2, 1);
+            ch = Math.max(ch / 2, 1);
         }
     }
 
@@ -169,7 +199,53 @@ public class HiZBuffer {
         org.lwjgl.opengl.GL11C.glViewport(0, 0, width, height);
     }
 
+    /** Build the pyramid without any raw GL texture state. */
+    public void buildMipChain(IGpuTexture srcDepth, int width, int height) {
+        this.ensureAllocated(width, height);
+
+        if (this.selfViews == null || this.selfViews.length != this.levels) {
+            this.freeSelfViews();
+            this.selfViews = new IGpuTexture[this.levels];
+        }
+
+        int cw = this.width;
+        int ch = this.height;
+        IGpuTexture currentSource = srcDepth;
+        for (int i = 0; i < this.levels; i++) {
+            try (RenderEncoder encoder = this.backend.beginRenderPass(
+                    RenderPassDesc.builder(cw, ch)
+                            .depthAttachment(this.texture, i,
+                                    RenderPassDesc.LoadAction.DONT_CARE,
+                                    RenderPassDesc.StoreAction.STORE, 1.0f)
+                            .build())) {
+                encoder.setPipeline(this.blitPipeline);
+                encoder.setTexture(0, currentSource);
+                encoder.setSampler(0, this.sampler);
+                encoder.setViewport(0, 0, cw, ch, 0, 1);
+                encoder.draw(RenderEncoder.PRIMITIVE_TRIANGLE_STRIP, 0, 4, 1, 0);
+            }
+
+            cw = Math.max(cw / 2, 1);
+            ch = Math.max(ch / 2, 1);
+            if (i + 1 < this.levels) {
+                if (this.selfViews[i] == null) {
+                    this.selfViews[i] = this.texture.createView(i, 1);
+                }
+                currentSource = this.selfViews[i];
+            }
+        }
+    }
+
+    private void freeSelfViews() {
+        if (this.selfViews == null) return;
+        for (IGpuTexture view : this.selfViews) {
+            if (view != null) view.free();
+        }
+        this.selfViews = null;
+    }
+
     public void free() {
+        this.freeSelfViews();
         this.fb.free();
         if (this.texture != null) {
             this.texture.free();

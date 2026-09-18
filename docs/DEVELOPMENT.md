@@ -60,6 +60,7 @@ development:
 | `VOXY_BOUND_DEBUG=1` | Tint chunk-bound-discarded fragments red (visualizes the depth mask) |
 | `VOXY_LOD_WATER_DEBUG=1` | Magenta water, depth-test off (water geometry coverage) |
 | `VOXY_NO_DEPTH_BOUND=1` | Kill switch: disable the chunk-bound depth mask |
+| `VOXY_METAL_REAL_HIZ=1` | Experimental: capture Sodium SOLID depth at pass tail and build next-frame Metal HiZ (full-frame GL readback; not production default) |
 | `VOXY_WATER_ANIMATE=0` | Kill switch: freeze LOD water animation |
 | `VOXY_HOT_SERIALIZE=1` | Submit+wait per traversal iteration (race diagnostic, slow) |
 | `VOXY_FOG_SMOOTH_MS` | Fog colour smoothing constant (0 disables) |

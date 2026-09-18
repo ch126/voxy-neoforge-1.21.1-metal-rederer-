@@ -408,6 +408,18 @@ public class VoxyRenderSystem {
          */
     }
 
+    /** Called from Sodium SOLID-pass TAIL; feeds next frame's Metal HiZ. */
+    public void captureMetalDepthAfterSolid() {
+        if (!this.pipeline.wantsMetalDepthCapture()) return;
+        if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                == me.cortex.voxy.client.core.gpu.BackendType.OPENGL) return;
+        Viewport<?> viewport = this.getViewport();
+        if (viewport == null) return;
+        int sourceFramebuffer = GL11.glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
+        this.pipeline.captureMetalDepth(
+                sourceFramebuffer, viewport.width, viewport.height, viewport.frameId);
+    }
+
 
 
     private void autoBalanceSubDivSize() {

@@ -111,6 +111,14 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     /** Animation counter for the placeholder Metal render — replaced by real Voxy output incrementally. */
     private static final boolean METAL_DIAGNOSTICS =
             "1".equals(System.getenv("VOXY_METAL_DIAGNOSTICS"));
+    /**
+     * Experimental real MC-depth HiZ path. The mseries reference keeps this
+     * opt-in because populated HiZ caused a horizon-culling regression; the
+     * zero-filled pyramid remains the safe default while we validate 1.21.1.
+     */
+    private static final boolean METAL_REAL_HIZ =
+            "1".equals(System.getenv("VOXY_METAL_REAL_HIZ"));
+    private me.cortex.voxy.client.core.rendering.util.DepthMirror metalDepthMirror;
     private int metalFrame;
 
     public void runPipeline(Viewport<?> viewport, int sourceFrameBuffer, int srcWidth, int srcHeight) {
@@ -277,6 +285,10 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             this.metalDepthTex.free();
             this.metalDepthTex = null;
         }
+        if (this.metalDepthMirror != null) {
+            this.metalDepthMirror.free();
+            this.metalDepthMirror = null;
+        }
         super.free0();
     }
 
@@ -316,13 +328,19 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
             this.metalBridgeHeight = fbh;
         }
 
-        // 2) Ensure the HiZ texture is allocated so HOT can bind it. We skip
-        //    the per-mip blit pass on Metal (its source-depth handoff is GL-only
-        //    until cross-context depth surfacing lands in chunk 6 step 2); the
-        //    zero-initialized texture trivially passes HiZ's "is occluded?"
-        //    test for every section — slower than real occlusion but
-        //    functionally correct.
-        viewport.hiZBuffer.ensureAllocated(viewport.width, viewport.height);
+        // 2) Safe default: a zero pyramid disables occlusion but cannot hide
+        //    valid LODs. VOXY_METAL_REAL_HIZ=1 enables the experimental
+        //    GL-depth readback -> Shared D32F mirror -> Metal mip chain.
+        if (METAL_REAL_HIZ && this.metalDepthMirror != null
+                && this.metalDepthMirror.texture() != null) {
+            // One-frame-old depth captured after Sodium's SOLID pass. Voxy is
+            // invoked at that pass's HEAD, where current-frame depth is still
+            // clear, so same-frame readback would contain only 1.0.
+            viewport.hiZBuffer.buildMipChain(
+                    this.metalDepthMirror.texture(), fbw, fbh);
+        } else {
+            viewport.hiZBuffer.ensureAllocated(fbw, fbh);
+        }
 
         // 2b) Lazy-allocate a pure, sampleable Metal depth texture. The stencil
         //     aspect is unused by this pass, and Depth24Stencil8 is not
@@ -394,7 +412,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                     + ", geometrySections=" + this.nodeManager.getGeometrySectionCount()
                     + ", renderSections=" + renderSections
                     + ", draws=" + opaque + "/" + translucent + "/" + temporal
-                    + ", boundSamples=" + boundNonZeroSamples + ", boundMax=" + boundMax);
+                    + ", boundSamples=" + boundNonZeroSamples + ", boundMax=" + boundMax
+                    + ", hiz=" + (METAL_REAL_HIZ ? "real" : "zero"));
         }
 
         // 5) Render pass against bridge color + Voxy-owned depth. Clears both
@@ -429,6 +448,21 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         }
         backend.submit();
         this.metalFrame++;
+    }
+
+    /** Capture Sodium's completed SOLID depth for next frame's temporal HiZ. */
+    public boolean wantsMetalDepthCapture() {
+        return METAL_REAL_HIZ;
+    }
+
+    public void captureMetalDepth(int sourceFramebuffer, int width, int height, int frameId) {
+        if (!METAL_REAL_HIZ || sourceFramebuffer == 0 || width <= 0 || height <= 0) return;
+        if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                == me.cortex.voxy.client.core.gpu.BackendType.OPENGL) return;
+        if (this.metalDepthMirror == null) {
+            this.metalDepthMirror = new me.cortex.voxy.client.core.rendering.util.DepthMirror();
+        }
+        this.metalDepthMirror.syncFromMC(sourceFramebuffer, width, height, frameId);
     }
 
     /** Accessor for the compositing mixin so it can grab the bridge's GL texture name. */
