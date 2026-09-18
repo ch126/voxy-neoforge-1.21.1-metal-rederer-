@@ -184,6 +184,12 @@ public class ModelTextureBakery {
 
 
     public int renderToStream(BlockState state, int streamBuffer, int streamOffset) {
+        // This capture path still owns raw OpenGL state. Metal currently uses
+        // the M12 fallback material path and therefore skips model baking.
+        if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            return 0;
+        }
         this.capture.clear();
         boolean isBlock = true;
         RenderType layer;

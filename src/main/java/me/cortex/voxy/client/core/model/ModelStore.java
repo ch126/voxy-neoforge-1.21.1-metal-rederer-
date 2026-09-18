@@ -56,4 +56,11 @@ public class ModelStore {
         glBindTextureUnit(textureBindingIndex, this.textures.id);
         glBindSampler(textureBindingIndex, this.blockSampler);
     }
+
+    /** Bind the model buffers through a backend render encoder. */
+    public void bindBuffers(me.cortex.voxy.client.core.gpu.RenderEncoder encoder,
+                            int modelBindingIndex, int colourBindingIndex) {
+        encoder.setBuffer(modelBindingIndex, this.modelBuffer, 0);
+        encoder.setBuffer(colourBindingIndex, this.modelColourBuffer, 0);
+    }
 }

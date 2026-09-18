@@ -4,8 +4,13 @@ import me.cortex.voxy.common.util.TrackedObject;
 
 import static org.lwjgl.opengl.GL45C.*;
 
-public class GlRenderBuffer extends TrackedObject {
+public class GlRenderBuffer extends TrackedObject implements me.cortex.voxy.client.core.gpu.IGpuRenderBuffer {
     public final int id;
+
+    @Override
+    public int id() {
+        return this.id;
+    }
 
     public GlRenderBuffer(int format, int width, int height) {
         this.id = glCreateRenderbuffers();

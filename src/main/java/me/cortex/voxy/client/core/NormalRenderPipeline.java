@@ -48,8 +48,13 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
     protected NormalRenderPipeline(AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
         super(nodeManager, nodeCleaner, traversal, frexSupplier, false);
         this.useEnvFog = VoxyConfig.CONFIG.useEnvironmentalFog;
-        this.finalBlit = new FullscreenBlit("voxy:post/blit_texture_depth_cutout.frag",
-                a->a.defineIf("USE_ENV_FOG", this.useEnvFog).define("EMIT_COLOUR"));
+        java.util.Map<String, String> defines = new java.util.LinkedHashMap<>();
+        defines.put("EMIT_COLOUR", "");
+        if (this.useEnvFog) {
+            defines.put("USE_ENV_FOG", "");
+        }
+        this.finalBlit = new FullscreenBlit("voxy:post/fullscreen.vert",
+                "voxy:post/blit_texture_depth_cutout.frag", defines);
     }
 
     @Override

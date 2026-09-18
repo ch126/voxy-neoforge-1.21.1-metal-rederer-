@@ -356,6 +356,11 @@ dependencies {
     lwjglNativesRaw "org.lwjgl:lwjgl-zstd:$lwjglVersion:natives-windows"
     lwjglNativesRaw "org.lwjgl:lwjgl-lmdb:$lwjglVersion:natives-linux"
     lwjglNativesRaw "org.lwjgl:lwjgl-zstd:$lwjglVersion:natives-linux"
+    // Apple Silicon natives used by the Metal backend and Voxy workers.
+    lwjglNativesRaw "org.lwjgl:lwjgl-lmdb:$lwjglVersion:natives-macos-arm64"
+    lwjglNativesRaw "org.lwjgl:lwjgl-zstd:$lwjglVersion:natives-macos-arm64"
+    lwjglNativesRaw "org.lwjgl:lwjgl-shaderc:$lwjglVersion:natives-macos-arm64"
+    lwjglNativesRaw "org.lwjgl:lwjgl-spvc:$lwjglVersion:natives-macos-arm64"
 }
 
 // Task to extract LWJGL native binaries (DLLs/SOs) from native JARs
@@ -428,6 +433,15 @@ dependencies {
     jarJar(implementation("org.lwjgl:lwjgl-zstd:$lwjglVersion")) {
         version { strictly "[3.3.0,4.0.0)"; prefer "$lwjglVersion" }
     }
+    jarJar(implementation("org.lwjgl:lwjgl-shaderc:$lwjglVersion")) {
+        version { strictly "[3.3.0,4.0.0)"; prefer "$lwjglVersion" }
+    }
+    jarJar(implementation("org.lwjgl:lwjgl-spvc:$lwjglVersion")) {
+        version { strictly "[3.3.0,4.0.0)"; prefer "$lwjglVersion" }
+    }
+    jarJar(implementation("org.lwjgl:lwjgl-vulkan:$lwjglVersion")) {
+        version { strictly "[3.3.0,4.0.0)"; prefer "$lwjglVersion" }
+    }
     // Add to runtime classpath for MC 1.21.1 (not needed for 1.21.9+)
     additionalRuntimeClasspath "org.lwjgl:lwjgl-lmdb:$lwjglVersion"
     additionalRuntimeClasspath "org.lwjgl:lwjgl-zstd:$lwjglVersion"
@@ -436,6 +450,11 @@ dependencies {
     additionalRuntimeClasspath "org.lwjgl:lwjgl-zstd:$lwjglVersion:natives-windows"
     additionalRuntimeClasspath "org.lwjgl:lwjgl-lmdb:$lwjglVersion:natives-linux"
     additionalRuntimeClasspath "org.lwjgl:lwjgl-zstd:$lwjglVersion:natives-linux"
+    additionalRuntimeClasspath "org.lwjgl:lwjgl-lmdb:$lwjglVersion:natives-macos-arm64"
+    additionalRuntimeClasspath "org.lwjgl:lwjgl-zstd:$lwjglVersion:natives-macos-arm64"
+    additionalRuntimeClasspath "org.lwjgl:lwjgl-shaderc:$lwjglVersion:natives-macos-arm64"
+    additionalRuntimeClasspath "org.lwjgl:lwjgl-spvc:$lwjglVersion:natives-macos-arm64"
+    additionalRuntimeClasspath "org.lwjgl:lwjgl-vulkan:$lwjglVersion:natives-macos-arm64"
 
     // === JarJar Bundled Dependencies (full feature parity) ===
 

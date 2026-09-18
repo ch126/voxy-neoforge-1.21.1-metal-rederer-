@@ -7,7 +7,7 @@ import static org.lwjgl.opengl.GL11C.*;
 import static org.lwjgl.opengl.GL30.GL_DEPTH24_STENCIL8;
 import static org.lwjgl.opengl.GL45C.*;
 
-public class GlTexture extends TrackedObject {
+public class GlTexture extends TrackedObject implements me.cortex.voxy.client.core.gpu.IGpuTexture {
     public final int id;
     private final int type;
     private int format;
@@ -15,6 +15,18 @@ public class GlTexture extends TrackedObject {
     private int height;
     private int levels;
     private boolean hasAllocated;
+
+    @Override
+    public int id() {
+        return this.id;
+    }
+
+    @Override
+    public void uploadSubImage2D(int level, int x, int y, int width, int height,
+                                 int format, int type, long dataAddr) {
+        this.assertAllocated();
+        GLCompat.textureSubImage2D(this.id, this.type, level, x, y, width, height, format, type, dataAddr);
+    }
 
     private static int COUNT;
     private static long ESTIMATED_TOTAL_SIZE;
@@ -99,6 +111,11 @@ public class GlTexture extends TrackedObject {
     public int getFormat() {
         this.assertAllocated();
         return this.format;
+    }
+
+    @Override
+    public int getType() {
+        return this.type;
     }
 
     private long getEstimatedSize() {

@@ -74,6 +74,11 @@ public class VoxyRenderSystem {
 
     private final AbstractRenderPipeline pipeline;
 
+    /** Accessor exposed for the Metal compositing mixin so it can read the IOSurface bridge. */
+    public AbstractRenderPipeline getPipeline() {
+        return this.pipeline;
+    }
+
     private static AbstractSectionRenderer.Factory<?,? extends IGeometryData> getRenderBackendFactory() {
         //TODO: need todo a thing where selects optimal section render based on if supports the pipeline and geometry data type
         return MDICSectionRenderer.FACTORY;
@@ -228,6 +233,13 @@ public class VoxyRenderSystem {
         // MC 1.21.1 NeoForge: Fog is handled by VoxyClientEvents.onRenderFog()
         // which listens to ViewportEvent.RenderFog and pushes fog to infinity
         // BEFORE terrain renders. This ensures no fog wall at vanilla render distance.
+        if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            // Metal owns its state and renders into the IOSurface bridge.
+            this.pipeline.preSetup(viewport);
+            this.pipeline.runPipeline(viewport, 0, viewport.width, viewport.height);
+            return;
+        }
 
         TimingStatistics.resetSamplers();
 

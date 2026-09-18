@@ -1,6 +1,9 @@
 #version 460 core
 //Use quad shuffling to compute fragment mip
 //#extension GL_KHR_shader_subgroup_quad: enable
+// M9 Phase 2 patch: bumped to #version 460 so gl_HelperInvocation is a
+// core built-in. shaderc/glslang's Vulkan profile doesn't accept
+// GL_ARB_shader_helper_invocation as an extension; 4.50+ has it built-in.
 #ifdef USE_SINGLE_TRI
 #define USE_NV_BARRY
 #endif
@@ -129,6 +132,57 @@ void main() {
     vec2 uv2 = modf(uv, tile)*(1.0/(vec2(3.0,2.0)*256.0));
     vec4 colour;
     vec2 texPos = uv2 + getBaseUV();
+
+#ifdef VOXY_NO_ATLAS
+    // M12 Metal path: ModelTextureBakery is still GL-only, so the
+    // blockModelAtlas + depthBoundingBuffer textures aren't populated /
+    // bound. Skip atlas sampling and emit a deterministic per-quad
+    // debug color hashed from `interData.x` (a flat varying carrying the
+    // model id + face + flags — varies per quad / section). Then modulate
+    // by a fake Lambertian-style shade computed from the face normal so
+    // the cube structure of each LOD chunk is visible (top faces bright,
+    // bottom faces dark) without needing MC's lightmap. Drops the
+    // depth-bounding and alpha-discard checks that depend on the unbound
+    // textures. `gl_InstanceID` lives only in the vertex stage so we
+    // can't use it here; interData.x gives sufficient variation.
+    {
+        uint hash = interData.x * 2654435761u;
+        hash ^= hash >> 13;
+        hash *= 1274126177u;
+        hash ^= hash >> 16;
+        // Map the hash channels into [0.55, 1.0] so every block reads as
+        // a saturated bright colour. The plain `(hash & 0xFF) / 255` from
+        // earlier let random channels collapse near zero — when combined
+        // with the Lambertian shade below the result averaged ~0.32,
+        // which read as "almost as dark as the background" for many
+        // blocks. Bias the range so the visual contrast is always strong.
+        colour = vec4(
+            float((hash >>  0) & 0xFFu) / 255.0 * 0.45 + 0.55,
+            float((hash >>  8) & 0xFFu) / 255.0 * 0.45 + 0.55,
+            float((hash >> 16) & 0xFFu) / 255.0 * 0.45 + 0.55,
+            1.0
+        );
+        // Face indices 0..5 = DOWN, UP, NORTH, SOUTH, WEST, EAST (mirrors
+        // ModelTextureBakery.VIEWS order). Sky-direction Lambertian factor:
+        // top faces approach 1.0, bottom faces approach 0.55 (floor raised
+        // from 0.30 so the down-faces still read clearly).
+        const vec3 FACE_NORMALS[6] = vec3[6](
+            vec3( 0, -1,  0),
+            vec3( 0,  1,  0),
+            vec3( 0,  0, -1),
+            vec3( 0,  0,  1),
+            vec3(-1,  0,  0),
+            vec3( 1,  0,  0)
+        );
+        uint face = getFace();
+        // Clamp face index for safety — getFace masks 3 bits so it's <8;
+        // out-of-range face indices fall back to the UP entry.
+        vec3 n = FACE_NORMALS[face < 6u ? face : 1u];
+        float ndotl = dot(n, normalize(vec3(0.3, 1.0, 0.5)));
+        float shade = clamp(ndotl * 0.35 + 0.65, 0.55, 1.0);
+        colour.rgb *= shade;
+    }
+#else
 //This is deprecated, TODO: remove the non mip code path
     //if (useMipmaps())
     {
@@ -139,6 +193,7 @@ void main() {
     }// else {
     //    colour = textureLod(blockModelAtlas, texPos, 0);
     //}
+#endif
 
     //If we are in shaders and are a helper invocation, just exit, as it enables extra performance gains for small sized
     // fragments, we do this here after derivative computation
@@ -156,6 +211,7 @@ void main() {
         return;
     }
 
+#ifndef VOXY_NO_ATLAS
     //Check the minimum bounding texture and ensure we are greater than it
     if (gl_FragCoord.z < texelFetch(depthTex, ivec2(gl_FragCoord.xy), 0).r) {
         discard;
@@ -178,6 +234,7 @@ void main() {
         return;
         #endif
     }
+#endif // VOXY_NO_ATLAS — closes the depth-bounding + alpha-discard block above
 
     #ifndef PATCHED_SHADER_ALLOW_DERIVATIVES
     if (gl_HelperInvocation) {
@@ -186,8 +243,14 @@ void main() {
     #endif
 
     #ifndef PATCHED_SHADER
+#ifdef VOXY_NO_ATLAS
+    // Already computed a debug colour up top; skip computeColour (which
+    // re-samples blockModelAtlas via textureLod). Emit straight to outColour.
+    outColour = colour;
+#else
     colour = computeColour(texPos, colour);
     outColour = colour;
+#endif
 
     #ifdef DEBUG_RENDER
     uint hash = quadDebug*1231421+123141;

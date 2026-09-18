@@ -6,10 +6,15 @@ import static org.lwjgl.opengl.ARBMapBufferRange.GL_MAP_WRITE_BIT;
 import static org.lwjgl.opengl.GL15.glDeleteBuffers;
 import static org.lwjgl.opengl.GL45C.*;
 
-public class GlPersistentMappedBuffer extends TrackedObject {
+public class GlPersistentMappedBuffer extends TrackedObject implements me.cortex.voxy.client.core.gpu.IGpuPersistentBuffer {
     public final int id;
     private final long size;
     private final long addr;
+
+    @Override
+    public int id() {
+        return this.id;
+    }
     public GlPersistentMappedBuffer(long size, int flags) {
         this.id = glCreateBuffers();
         this.size = size;
@@ -34,5 +39,12 @@ public class GlPersistentMappedBuffer extends TrackedObject {
 
     public GlPersistentMappedBuffer name(String name) {
         return GlDebug.name(name, this);
+    }
+
+    @Override
+    public void flushRange(long offset, long length) {
+        if (length > 0) {
+            glFlushMappedNamedBufferRange(this.id, offset, length);
+        }
     }
 }

@@ -41,7 +41,7 @@ import static org.lwjgl.opengl.GL42.glDepthFunc;
 import static org.lwjgl.opengl.GL42.*;
 import static org.lwjgl.opengl.GL45.glClearNamedFramebufferfi;
 import static org.lwjgl.opengl.GL45.glGetNamedFramebufferAttachmentParameteri;
-import static org.lwjgl.opengl.GL45C.glBindTextureUnit;
+import static me.cortex.voxy.client.core.gl.GLCompat.bindTextureUnit;
 
 public abstract class AbstractRenderPipeline extends TrackedObject {
     private final BooleanSupplier frexStillHasWork;
@@ -94,7 +94,35 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         glBindFramebuffer(GL_FRAMEBUFFER, sourceFrameBuffer);
     }
 
+    /** IOSurface bridge for the Metal render path. Lazy-allocated on first non-GL frame. */
+    private me.cortex.voxy.client.core.interop.IOSurfaceBridge metalBridge;
+    private int metalBridgeWidth;
+    private int metalBridgeHeight;
+    /**
+     * Depth texture for {@code runPipelineMetal}'s render pass. Lazy-allocated
+     * to match the bridge size so depth-tested LOD terrain self-occludes correctly.
+     * Lives in Metal-side memory (the bridge's color is shared with GL via
+     * IOSurface; the depth has no GL consumer so it stays Metal-private).
+     */
+    private me.cortex.voxy.client.core.gpu.IGpuTexture metalDepthTex;
+    private int metalDepthWidth;
+    private int metalDepthHeight;
+    /** Animation counter for the placeholder Metal render — replaced by real Voxy output incrementally. */
+    private int metalFrame;
+
     public void runPipeline(Viewport<?> viewport, int sourceFrameBuffer, int srcWidth, int srcHeight) {
+        if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
+            // Metal path — M12 chunk 6 step 1 runs the migrated compute side
+            // of the pipeline (DownloadStream + AsyncNodeManager.tick +
+            // NodeCleaner.tick + HOT.doTraversal + MDIC.buildDrawCalls) but
+            // still clears the bridge for visual feedback instead of issuing
+            // real LOD draws. Subsequent steps migrate renderTerrain /
+            // renderTranslucent and replace the clear with encoder draws so
+            // Voxy's actual LOD content reaches the IOSurface bridge.
+            this.runPipelineMetal(viewport);
+            return;
+        }
         int depthTexture = this.setup(viewport, sourceFrameBuffer, srcWidth, srcHeight);
 
         var rs = ((AbstractSectionRenderer)this.sectionRenderer);
@@ -118,6 +146,12 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         glBindFramebuffer(GL_FRAMEBUFFER, sourceFrameBuffer);
     }
 
+    /** Push-block binding for depth_copy.frag's scaleFactor (see Push struct in the shader). */
+    private static final int DEPTH_COPY_PUSH_BINDING = 14;
+    /** Push-block binding for blit_texture_depth_cutout.frag's PushMats (invProj + proj). */
+    private static final int BLIT_DEPTH_MATS_PUSH_BINDING = 14;
+    private static final int BLIT_DEPTH_MATS_PUSH_SIZE = 4 * 4 * 4 * 2; // two mat4s
+
     protected void initDepthStencil(int sourceFrameBuffer, int targetFb, int srcWidth, int srcHeight, int width, int height) {
         glClearNamedFramebufferfi(targetFb, GL_DEPTH_STENCIL, 0, 1.0f, 1);
         // using blit to copy depth from mismatched depth formats is not portable so instead a full screen pass is performed for a depth copy
@@ -126,9 +160,15 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
         this.depthCopy.bind();
         int depthTexture = glGetNamedFramebufferAttachmentParameteri(sourceFrameBuffer, GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
-        glBindTextureUnit(0, depthTexture);
+        bindTextureUnit(0, depthTexture);
         glBindSampler(0, DEPTH_SAMPLER);
-        glUniform2f(1,((float)width)/srcWidth, ((float)height)/srcHeight);
+        // Push scaleFactor (vec2) into the Push UBO declared at DEPTH_COPY_PUSH_BINDING.
+        try (var stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            long addr = stack.nmalloc(8);
+            MemoryUtil.memPutFloat(addr,     ((float) width) / srcWidth);
+            MemoryUtil.memPutFloat(addr + 4, ((float) height) / srcHeight);
+            this.depthCopy.setBytes(DEPTH_COPY_PUSH_BINDING, addr, 8);
+        }
         glColorMask(false,false,false,false);
         this.depthCopy.blit();
 
@@ -166,7 +206,6 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         glStencilFunc(GL_EQUAL, 1, 0xFF);
     }
 
-    private static final long SCRATCH = MemoryUtil.nmemAlloc(4*4*4);
     protected static void transformBlitDepth(FullscreenBlit blitShader, int srcDepthTex, int dstFB, Viewport<?> viewport, Matrix4f targetTransform) {
         // at this point the dst frame buffer doesn't have a stencil attachment so we don't need to keep the stencil test on for the blit
         // in the worst case the dstFB does have a stencil attachment causing this pass to become 'corrupted'
@@ -174,11 +213,15 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         glBindFramebuffer(GL30.GL_FRAMEBUFFER, dstFB);
 
         blitShader.bind();
-        glBindTextureUnit(0, srcDepthTex);
-        new Matrix4f(viewport.MVP).invert().getToAddress(SCRATCH);
-        nglUniformMatrix4fv(1, 1, false, SCRATCH);//inverse fromProjection
-        targetTransform.getToAddress(SCRATCH);//new Matrix4f(tooProjection).mul(vp.modelView).get(data);
-        nglUniformMatrix4fv(2, 1, false, SCRATCH);//tooProjection
+        bindTextureUnit(0, srcDepthTex);
+
+        // Push PushMats { mat4 invProjMat; mat4 projMat; } into the UBO at BLIT_DEPTH_MATS_PUSH_BINDING.
+        try (var stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            long addr = stack.nmalloc(BLIT_DEPTH_MATS_PUSH_SIZE);
+            new Matrix4f(viewport.MVP).invert().getToAddress(addr);                 // invProjMat
+            targetTransform.getToAddress(addr + 4 * 4 * 4);                          // projMat
+            blitShader.setBytes(BLIT_DEPTH_MATS_PUSH_BINDING, addr, BLIT_DEPTH_MATS_PUSH_SIZE);
+        }
 
         glEnable(GL_DEPTH_TEST);
         blitShader.blit();
@@ -223,7 +266,128 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         this.depthMaskBlit.delete();
         this.depthSetBlit.delete();
         this.depthCopy.delete();
+        if (this.metalBridge != null) {
+            this.metalBridge.close();
+            this.metalBridge = null;
+        }
+        if (this.metalDepthTex != null) {
+            this.metalDepthTex.free();
+            this.metalDepthTex = null;
+        }
         super.free0();
+    }
+
+    /**
+     * Metal-path runPipeline (M12 chunk 6, evolving). Today runs the migrated
+     * compute side end-to-end on Metal — every stage in this method is either
+     * already encoder-backed or skipped with a Metal-aware substitute — and
+     * still clears the IOSurface bridge as visual confirmation that the
+     * pipeline executed. Real LOD draws land in subsequent chunk 6 steps when
+     * renderTerrain / renderTranslucent migrate to RenderEncoder.
+     * <p>
+     * Compared to the GL {@link #runPipeline}, the Metal path currently
+     * skips: {@link #setup} (depth-stencil FBO copy uses raw GL),
+     * {@link me.cortex.voxy.client.core.rendering.util.HiZBuffer#buildMipChain}
+     * (partial GL — see chunk 6 step 2), the FrEx work loop wrapper, the
+     * raw {@code glMemoryBarrier} inside {@link #innerPrimaryWork}, the
+     * post-opaque SSAO compute, and {@link #finish}. The compute pipeline
+     * (HOT traversal + buildDrawCalls' 5 prepasses) runs in full.
+     */
+    private void runPipelineMetal(Viewport<?> viewport) {
+        int fbw = viewport.width;
+        int fbh = viewport.height;
+        if (fbw <= 0 || fbh <= 0) return;
+        var backend = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get();
+        if (!(backend instanceof me.cortex.voxy.client.core.metal.MetalRenderBackend mrb)) return;
+
+        // 1) Allocate the IOSurface bridge sized to MC's framebuffer. The
+        //    bridge is the cross-context handle: Metal renders into the
+        //    backing MTLTexture, IOSurfaceBridgeCompositor blits it into MC's
+        //    main RT via a CGL-bound GL_TEXTURE_RECTANGLE source FBO.
+        if (this.metalBridge == null || this.metalBridgeWidth != fbw || this.metalBridgeHeight != fbh) {
+            if (this.metalBridge != null) this.metalBridge.close();
+            this.metalBridge = me.cortex.voxy.client.core.interop.IOSurfaceBridge.create(
+                    mrb.device(), fbw, fbh,
+                    me.cortex.voxy.client.core.interop.IOSurfaceBridge.IOSurfaceFormat.BGRA8);
+            this.metalBridgeWidth  = fbw;
+            this.metalBridgeHeight = fbh;
+        }
+
+        // 2) Ensure the HiZ texture is allocated so HOT can bind it. We skip
+        //    the per-mip blit pass on Metal (its source-depth handoff is GL-only
+        //    until cross-context depth surfacing lands in chunk 6 step 2); the
+        //    zero-initialized texture trivially passes HiZ's "is occluded?"
+        //    test for every section — slower than real occlusion but
+        //    functionally correct.
+        viewport.hiZBuffer.ensureAllocated(viewport.width, viewport.height);
+
+        // 2b) Lazy-allocate the Metal-side depth texture for our render pass.
+        //     D24S8 matches AbstractRenderPipeline.fb's GL format; the encoder
+        //     pass clears it to 1.0 (far plane) each frame.
+        if (this.metalDepthTex == null || this.metalDepthWidth != fbw || this.metalDepthHeight != fbh) {
+            if (this.metalDepthTex != null) this.metalDepthTex.free();
+            this.metalDepthTex = backend.createTexture()
+                    .store(org.lwjgl.opengl.GL30C.GL_DEPTH24_STENCIL8, 1, fbw, fbh)
+                    .name("VoxyMetalDepth");
+            this.metalDepthWidth = fbw;
+            this.metalDepthHeight = fbh;
+        }
+
+        // 3) Compute side — copy of innerPrimaryWork's body minus the GL bits
+        //    (HiZBuffer.buildMipChain, raw glMemoryBarrier, FrEx loop). Each
+        //    sub-stage is already encoder-backed (commits 0b963825, 68734b78,
+        //    5dcbc645, 89b35814 for HOT's last raw-GL gaps).
+        me.cortex.voxy.client.core.rendering.util.DownloadStream.INSTANCE.tick();
+        this.nodeManager.tick(this.traversal.getNodeBuffer(), this.nodeCleaner);
+        this.nodeCleaner.tick(this.traversal.getNodeBuffer());
+        this.traversal.doTraversal(viewport);
+
+        // 4) Per-frame draw-command generation — all 5 MDIC compute prepasses
+        //    (prep / cull-stub / commandGen / prefixSum / translucentGen) now
+        //    flow through ComputeEncoder (chunks 1–5). Raw cast matches the
+        //    GL path (line 119) — the renderer's viewport generic is set at
+        //    construction by RenderPipelineFactory and we trust the pairing.
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        AbstractSectionRenderer rs = (AbstractSectionRenderer) this.sectionRenderer;
+        rs.buildDrawCalls(viewport);
+
+        // 5) Render pass against bridge color + Voxy-owned depth. Clears both
+        //    each frame (no MC-depth import on Metal yet, so we render every
+        //    LOD chunk against a fresh depth buffer — they self-occlude but
+        //    don't z-test against MC's foreground terrain). Inside the pass
+        //    we call MDIC's Metal-aware renderOpaque equivalent to issue
+        //    the actual LOD draws via the RenderEncoder API. The bridge clear
+        //    color is kept dark (near-black) so any rendered LOD geometry is
+        //    visible against it; if no geometry shows, the strip stays dark.
+        var pass = me.cortex.voxy.client.core.gpu.RenderPassDesc.builder(fbw, fbh)
+                .clearColor(this.metalBridge.asGpuTexture(), 0.02f, 0.02f, 0.04f, 1.0f)
+                .clearDepth(this.metalDepthTex, 1.0f)
+                .build();
+        try (var enc = backend.beginRenderPass(pass)) {
+            enc.setViewport(0, 0, fbw, fbh, 0.0f, 1.0f);
+            // M12 close — invoke MDIC's Metal-aware draws in the same order
+            // GL runPipeline uses (opaque → temporal → translucent). Iris is
+            // GL-gated upstream so on non-GL the section renderer is always
+            // an MDICSectionRenderer (and its viewport an MDICViewport —
+            // typing follows from the RenderPipelineFactory pairing).
+            // postOpaquePreTranslucent (SSAO) is skipped on Metal — SSAO
+            // is M13 polish; the LOD result is intelligible without it.
+            if (this.sectionRenderer instanceof me.cortex.voxy.client.core.rendering.section.backend.mdic.MDICSectionRenderer mdic
+                    && viewport instanceof me.cortex.voxy.client.core.rendering.section.backend.mdic.MDICViewport mv) {
+                mdic.renderOpaqueMetal(enc, mv);
+                mdic.renderTemporalMetal(enc, mv);
+                if (!this.deferTranslucency) {
+                    mdic.renderTranslucentMetal(enc, mv);
+                }
+            }
+        }
+        backend.submit();
+        this.metalFrame++;
+    }
+
+    /** Accessor for the compositing mixin so it can grab the bridge's GL texture name. */
+    public me.cortex.voxy.client.core.interop.IOSurfaceBridge metalBridge() {
+        return this.metalBridge;
     }
 
     public void addDebug(List<String> debug) {

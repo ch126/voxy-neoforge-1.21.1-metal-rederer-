@@ -5,8 +5,13 @@ import me.cortex.voxy.common.util.TrackedObject;
 import static org.lwjgl.opengl.GL45C.*;
 import static org.lwjgl.opengl.GL45C.glNamedFramebufferDrawBuffers;
 
-public class GlFramebuffer extends TrackedObject {
+public class GlFramebuffer extends TrackedObject implements me.cortex.voxy.client.core.gpu.IGpuFramebuffer {
     public final int id;
+
+    @Override
+    public int id() {
+        return this.id;
+    }
     public GlFramebuffer() {
         this.id = glCreateFramebuffers();
     }
@@ -23,6 +28,21 @@ public class GlFramebuffer extends TrackedObject {
     public GlFramebuffer bind(int attachment, GlRenderBuffer buffer) {
         glNamedFramebufferRenderbuffer(this.id, attachment, GL_RENDERBUFFER, buffer.id);
         return this;
+    }
+
+    @Override
+    public me.cortex.voxy.client.core.gpu.IGpuFramebuffer bind(int attachment, me.cortex.voxy.client.core.gpu.IGpuTexture texture) {
+        return this.bind(attachment, (GlTexture) texture);
+    }
+
+    @Override
+    public me.cortex.voxy.client.core.gpu.IGpuFramebuffer bind(int attachment, me.cortex.voxy.client.core.gpu.IGpuTexture texture, int level) {
+        return this.bind(attachment, (GlTexture) texture, level);
+    }
+
+    @Override
+    public me.cortex.voxy.client.core.gpu.IGpuFramebuffer bind(int attachment, me.cortex.voxy.client.core.gpu.IGpuRenderBuffer buffer) {
+        return this.bind(attachment, (GlRenderBuffer) buffer);
     }
 
     public GlFramebuffer setDrawBuffers(int... buffers) {

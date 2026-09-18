@@ -7,10 +7,15 @@ import java.util.Arrays;
 import static org.lwjgl.opengl.GL30.glGenVertexArrays;
 import static org.lwjgl.opengl.GL45C.*;
 
-public class GlVertexArray extends TrackedObject {
+public class GlVertexArray extends TrackedObject implements me.cortex.voxy.client.core.gpu.IGpuVertexArray {
     public static final int STATIC_VAO = glGenVertexArrays();
 
     public final int id;
+
+    @Override
+    public int id() {
+        return this.id;
+    }
     private int[] indices = new int[0];
     private int stride;
     public GlVertexArray() {

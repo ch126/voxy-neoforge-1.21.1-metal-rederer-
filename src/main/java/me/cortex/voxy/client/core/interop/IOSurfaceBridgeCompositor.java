@@ -764,39 +764,9 @@ public final class IOSurfaceBridgeCompositor {
     private static Object cachedMcMainColorTex;
     private static java.lang.reflect.Field firstFboIdField;
     private static int resolveMcMainFbo(com.mojang.blaze3d.pipeline.RenderTarget mainRT) {
-        try {
-            Object colorTex = mainRT.getColorTexture();
-            if (colorTex == null) return cachedMcMainFbo;
-            if (colorTex == cachedMcMainColorTex && cachedMcMainFbo > 0) {
-                return cachedMcMainFbo;
-            }
-            cachedMcMainColorTex = colorTex;
-            if (firstFboIdField == null
-                    || !firstFboIdField.getDeclaringClass().isInstance(colorTex)) {
-                Class<?> c = colorTex.getClass();
-                while (c != null && c != Object.class) {
-                    try {
-                        firstFboIdField = c.getDeclaredField("firstFboId");
-                        firstFboIdField.setAccessible(true);
-                        break;
-                    } catch (NoSuchFieldException ignored) {
-                        c = c.getSuperclass();
-                    }
-                }
-                if (firstFboIdField == null) {
-                    Logger.warn("IOSurfaceBridgeCompositor: could not locate firstFboId on " + colorTex.getClass().getName());
-                    return cachedMcMainFbo;
-                }
-            }
-            int fbo = firstFboIdField.getInt(colorTex);
-            if (fbo > 0) {
-                cachedMcMainFbo = fbo;
-            }
-            return cachedMcMainFbo;
-        } catch (Throwable t) {
-            Logger.warn("IOSurfaceBridgeCompositor: failed to resolve MC mainRT FBO", t);
-            return cachedMcMainFbo;
-        }
+        // In Minecraft 1.21.1 RenderTarget still exposes the FBO directly.
+        // The reflective GlTexture path above is only needed by newer Blaze3D.
+        return mainRT.frameBufferId;
     }
 
     private static boolean rebind(IOSurfaceBridge bridge) {

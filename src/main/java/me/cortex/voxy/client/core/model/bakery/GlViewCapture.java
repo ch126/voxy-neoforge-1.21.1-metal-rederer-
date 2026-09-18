@@ -4,6 +4,8 @@ import me.cortex.voxy.client.core.gl.GlFramebuffer;
 import me.cortex.voxy.client.core.gl.GlTexture;
 import me.cortex.voxy.client.core.gl.shader.Shader;
 import me.cortex.voxy.client.core.gl.shader.ShaderType;
+import me.cortex.voxy.client.core.gpu.BackendType;
+import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
@@ -31,6 +33,15 @@ public class GlViewCapture {
     public GlViewCapture(int width, int height) {
         this.width = width;
         this.height = height;
+        if (RenderBackendFactory.get().getType() != BackendType.OPENGL) {
+            this.metaTex = null;
+            this.colourTex = null;
+            this.depthTex = null;
+            this.stencilTex = null;
+            this.framebuffer = null;
+            this.copyOutShader = null;
+            return;
+        }
         this.metaTex = new GlTexture().store(GL_R32UI, 1, width*3, height*2).name("ModelBakeryMetadata");
         this.colourTex = new GlTexture().store(GL_RGBA8, 1, width*3, height*2).name("ModelBakeryColour");
         this.depthTex = new GlTexture().store(GL_DEPTH24_STENCIL8, 1, width*3, height*2).name("ModelBakeryDepth");
@@ -70,6 +81,9 @@ public class GlViewCapture {
     }
 
     public void emitToStream(int buffer, int offset) {
+        if (RenderBackendFactory.get().getType() != BackendType.OPENGL) {
+            return;
+        }
         this.copyOutShader.bind();
         glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 4, buffer, offset, (this.width*3L)*(this.height*2L)*4L*2);//its 2*4 because colour + depth stencil
         glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT|GL_TEXTURE_UPDATE_BARRIER_BIT|GL_PIXEL_BUFFER_BARRIER_BIT|GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);//Am not sure if barriers are right
@@ -78,6 +92,9 @@ public class GlViewCapture {
     }
 
     public void clear() {
+        if (RenderBackendFactory.get().getType() != BackendType.OPENGL) {
+            return;
+        }
         try (var stack = MemoryStack.stackPush()) {
             long ptr = stack.nmalloc(4*4);
             MemoryUtil.memPutLong(ptr, 0);
@@ -91,6 +108,9 @@ public class GlViewCapture {
     }
 
     public void free() {
+        if (this.framebuffer == null) {
+            return;
+        }
         this.framebuffer.free();
         this.colourTex.free();
         this.stencilTex.free();
