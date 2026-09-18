@@ -5,10 +5,11 @@ import me.cortex.voxy.client.config.SodiumConfigBuilder.*;
 import me.cortex.voxy.client.VoxyClient;
 import me.cortex.voxy.client.VoxyClientInstance;
 import me.cortex.voxy.client.core.IGetVoxyRenderSystem;
-import me.cortex.voxy.client.core.util.IrisUtil;
+import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.util.cpu.CpuLayout;
 import me.cortex.voxy.commonImpl.VoxyCommon;
 import net.caffeinemc.mods.sodium.api.config.ConfigEntryPoint;
+import net.caffeinemc.mods.sodium.api.config.ConfigEntryPointForge;
 import net.caffeinemc.mods.sodium.api.config.option.OptionFlag;
 import net.caffeinemc.mods.sodium.api.config.option.OptionImpact;
 import net.caffeinemc.mods.sodium.api.config.option.Range;
@@ -17,10 +18,12 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
+@ConfigEntryPointForge("voxy")
 public class VoxyConfigMenu implements ConfigEntryPoint {
     @Override
     public void registerConfigLate(ConfigBuilder B) {
         if (!VoxyCommon.isAvailable()) return;//Dont even register the config if its not avalible
+        Logger.info("Registering Voxy settings with Sodium 0.8 Config API");
 
         var CFG = VoxyConfig.CONFIG;
 
@@ -35,7 +38,7 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                         if (instance != null) {
                             instance.updateDedicatedThreads();
                         }
-                    }, "voxy:enabled").register("voxy:iris_reload", ()->IrisUtil.reload());
+                    }, "voxy:enabled");
                 },
                 new Page(Component.translatable("voxy.config.general"),
                         new Group(
@@ -57,7 +60,7 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                                 }
                                                 VoxyCommon.shutdownInstance();
                                             }
-                                        }).setPostChangeFlags(RENDER_RELOAD, "voxy:iris_reload").setEnabler(null)
+                                        }).setPostChangeFlags(RENDER_RELOAD).setEnabler(null)
                         ), new Group(
                                 new IntOption(
                                         "voxy:thread_count",
@@ -93,7 +96,6 @@ public class VoxyConfigMenu implements ConfigEntryPoint {
                                                 }
                                             }
                                         },"voxy:enabled", RENDER_RELOAD)
-                                        .setPostChangeFlags("voxy:iris_reload")
                                         .setEnabler("voxy:enabled")
                         ), new Group(
                                 new IntOption(
