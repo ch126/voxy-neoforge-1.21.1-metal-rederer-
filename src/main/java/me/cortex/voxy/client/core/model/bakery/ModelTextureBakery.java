@@ -38,12 +38,15 @@ public class ModelTextureBakery {
     private static final Matrix4f[] VIEWS = new Matrix4f[6];
 
     private final GlViewCapture capture;
+    private MetalViewCapture metalCapture;
     private final ReuseVertexConsumer vc = new ReuseVertexConsumer();
 
     private final int width;
     private final int height;
     public ModelTextureBakery(int width, int height) {
-        this.capture = new GlViewCapture(width, height);
+        this.capture = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                == me.cortex.voxy.client.core.gpu.BackendType.OPENGL
+                ? new GlViewCapture(width, height) : null;
         this.width = width;
         this.height = height;
     }
@@ -178,7 +181,11 @@ public class ModelTextureBakery {
     }
 
     public void free() {
-        this.capture.free();
+        if (this.capture != null) this.capture.free();
+        if (this.metalCapture != null) {
+            this.metalCapture.free();
+            this.metalCapture = null;
+        }
         this.vc.free();
     }
 
@@ -188,7 +195,7 @@ public class ModelTextureBakery {
         // the M12 fallback material path and therefore skips model baking.
         if (me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
                 != me.cortex.voxy.client.core.gpu.BackendType.OPENGL) {
-            return 0;
+            throw new IllegalStateException("Metal model baking must use heap-owned output");
         }
         this.capture.clear();
         boolean isBlock = true;
@@ -356,6 +363,101 @@ public class ModelTextureBakery {
         }
 
         return (isAnyShaded?1:0)|(isAnyDarkend?2:0);
+    }
+
+    /** Metal cannot use RawDownloadStream's GL-mapped destination. */
+    public boolean shouldUseMetalDefaultBake() {
+        return me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getType()
+                == me.cortex.voxy.client.core.gpu.BackendType.METAL;
+    }
+
+    /** Bake directly into the heap allocation owned by ModelFactory. */
+    public int renderDefaultBakeToHeap(BlockState state, long destination) {
+        if ("1".equals(System.getenv("VOXY_BAKERY_OFF"))) {
+            writeFallbackBake(destination, state.getRenderShape() != RenderShape.INVISIBLE
+                    || state.getBlock() instanceof LiquidBlock);
+            return 0;
+        }
+        return renderToStreamMetal(state, destination);
+    }
+
+    private int renderToStreamMetal(BlockState state, long destination) {
+        if (state.getRenderShape() == RenderShape.INVISIBLE
+                && !(state.getBlock() instanceof LiquidBlock)) {
+            writeFallbackBake(destination, false);
+            return 0;
+        }
+        if (this.metalCapture == null) {
+            this.metalCapture = new MetalViewCapture(this.width, this.height);
+        }
+
+        boolean blockModel = !(state.getBlock() instanceof LiquidBlock);
+        RenderType layer;
+        if (!blockModel) {
+            layer = ItemBlockRenderTypes.getRenderLayer(state.getFluidState());
+        } else if (state.getBlock() instanceof LeavesBlock) {
+            layer = RenderType.solid();
+        } else {
+            layer = ItemBlockRenderTypes.getChunkRenderType(state);
+        }
+
+        int blockTextureId = Minecraft.getInstance().getTextureManager()
+                .getTexture(TextureAtlas.LOCATION_BLOCKS).getId();
+        boolean anyShaded = false;
+        boolean anyDarkened = false;
+        this.metalCapture.clear();
+        Matrix4f matrix = new Matrix4f();
+
+        if (blockModel) {
+            this.vc.reset();
+            this.bakeBlockModel(state, layer);
+            anyShaded = this.vc.anyShaded;
+            anyDarkened = this.vc.anyDarkendTex;
+            if (!this.vc.isEmpty()) {
+                this.metalCapture.beginBake(blockTextureId, this.vc.getAddress(), this.vc.quadCount());
+                for (int face = 0; face < VIEWS.length; face++) {
+                    setMetalProjection(matrix, face);
+                    this.metalCapture.renderFace(face % 3, face / 3, matrix);
+                }
+                this.metalCapture.endBake();
+            }
+        } else {
+            for (int face = 0; face < VIEWS.length; face++) {
+                this.vc.reset();
+                this.bakeFluidState(state, layer, face);
+                if (this.vc.isEmpty()) continue;
+                anyShaded |= this.vc.anyShaded;
+                anyDarkened |= this.vc.anyDarkendTex;
+                this.metalCapture.beginBake(blockTextureId, this.vc.getAddress(), this.vc.quadCount());
+                setMetalProjection(matrix, face);
+                this.metalCapture.renderFace(face % 3, face / 3, matrix);
+                this.metalCapture.endBake();
+            }
+        }
+
+        this.metalCapture.emitToStream(destination);
+        return (anyShaded ? 1 : 0) | (anyDarkened ? 2 : 0);
+    }
+
+    private static void setMetalProjection(Matrix4f matrix, int face) {
+        matrix.set(2, 0, 0, 0,
+                0, -2, 0, 0,
+                0, 0, 0.5f, 0,
+                -1, 1, 0.25f, 1)
+                .mul(VIEWS[face]);
+    }
+
+    private void writeFallbackBake(long destination, boolean visible) {
+        long pixels = (long) this.width * 3L * this.height * 2L;
+        if (!visible) {
+            org.lwjgl.system.MemoryUtil.memSet(destination, 0, pixels * 8L);
+            return;
+        }
+        for (long pixel = 0; pixel < pixels; pixel++) {
+            long address = destination + pixel * 8L;
+            org.lwjgl.system.MemoryUtil.memPutInt(address, 0xFFFFFFFF);
+            org.lwjgl.system.MemoryUtil.memPutInt(address + 4, 0x80);
+        }
     }
 
 

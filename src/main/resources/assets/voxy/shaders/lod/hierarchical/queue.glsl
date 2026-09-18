@@ -34,7 +34,7 @@ uint getCurrentNode() {
 uint nodePushIndex = -1;
 void pushNodesInit(uint nodeCount) {
     //Debug
-    #ifdef DEBUG
+    #if defined(DEBUG) && !defined(VOXY_VULKAN)
     if (queueIdx >= (MAX_ITERATIONS-1)) {
         printf("LOG: Traversal tried inserting a node into next iteration, which is outside max iteration bounds. GID: %d, count: %d", gl_GlobalInvocationID.x, nodeCount);
         nodePushIndex = -1;
@@ -50,7 +50,7 @@ void pushNodesInit(uint nodeCount) {
 }
 
 void pushNode(uint nodeId) {
-    #ifdef DEBUG
+    #if defined(DEBUG) && !defined(VOXY_VULKAN)
     if (nodePushIndex == -1) {
         printf("LOG: Tried pushing node when push node wasnt successful. GID: %d, pushing: %d", gl_GlobalInvocationID.x, nodeId);
         return;

@@ -168,6 +168,15 @@ neoForge {
             client()
             gameDirectory = project.file('run')
             systemProperty 'forge.logging.console.level', 'info'
+            // JOML 1.10.5's Unsafe field-offset self-test is not compatible
+            // with the Java 21 transforming module loader used by ModDev.
+            systemProperty 'joml.nounsafe', 'true'
+            // Optional unattended launch for renderer validation:
+            // ./gradlew runClient -PquickPlayWorld='World Name'
+            if (project.hasProperty('quickPlayWorld')) {
+                programArgument '--quickPlaySingleplayer'
+                programArgument project.property('quickPlayWorld').toString()
+            }
         }
     }
 
@@ -548,12 +557,17 @@ dependencies {
             prefer '1.10'
         }
     }
+    // ModDev does not place nested JarJar contents on the development
+    // module path. VoxyCommands eagerly loads DHImporter while registering
+    // commands, so both optional importer libraries must be present there.
+    additionalRuntimeClasspath 'org.tukaani:xz:1.10'
     jarJar(implementation('org.xerial:sqlite-jdbc:3.49.1.0')) {
         version {
             strictly '[3.40.0.0, 4.0.0.0)'
             prefer '3.49.1.0'
         }
     }
+    additionalRuntimeClasspath 'org.xerial:sqlite-jdbc:3.49.1.0'
     //implementation 'org.rocksdb:rocksdbjni:8.10.0'
     //implementation 'redis.clients:jedis:5.1.0'
 }

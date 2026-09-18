@@ -27,5 +27,6 @@ void main() {
         return;
     }
     uint pos = ids[id];
-    visiblity[pos&((1u<<31)-1)] = mix(setTo, uint(-1), (pos&(1u<<31)) == 0);
+    // SPIRV-Cross' MSL path miscompiles the boolean-select mix overload.
+    visiblity[pos&((1u<<31)-1)] = (pos&(1u<<31)) == 0 ? uint(-1) : setTo;
 }

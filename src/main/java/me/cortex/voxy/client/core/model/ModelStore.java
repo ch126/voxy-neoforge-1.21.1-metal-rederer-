@@ -1,7 +1,10 @@
 package me.cortex.voxy.client.core.model;
 
-import me.cortex.voxy.client.core.gl.GlBuffer;
-import me.cortex.voxy.client.core.gl.GlTexture;
+import me.cortex.voxy.client.core.gpu.IGpuBuffer;
+import me.cortex.voxy.client.core.gpu.IGpuSampler;
+import me.cortex.voxy.client.core.gpu.IGpuTexture;
+import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
+import me.cortex.voxy.client.core.gpu.SamplerDesc;
 import me.cortex.voxy.client.mixin.minecraft.AccessorTextureAtlas;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
@@ -15,19 +18,25 @@ import static org.lwjgl.opengl.GL30.glBindBufferBase;
 import static org.lwjgl.opengl.GL33.*;
 import static org.lwjgl.opengl.GL33C.glSamplerParameteri;
 import static org.lwjgl.opengl.GL43.GL_SHADER_STORAGE_BUFFER;
-import static org.lwjgl.opengl.GL45.glBindTextureUnit;
+import static me.cortex.voxy.client.core.gl.GLCompat.bindTextureUnit;
 
 public class ModelStore {
     public static final int MODEL_SIZE = 64;
-    final GlBuffer modelBuffer;
-    final GlBuffer modelColourBuffer;
-    final GlTexture textures;
+    final IGpuBuffer modelBuffer;
+    final IGpuBuffer modelColourBuffer;
+    final IGpuTexture textures;
     public final int blockSampler = glGenSamplers();
+    public final IGpuSampler atlasSampler;
 
     public ModelStore() {
-        this.modelBuffer = new GlBuffer(MODEL_SIZE * (1<<16)).name("ModelData");
-        this.modelColourBuffer = new GlBuffer(4 * (1<<16)).name("ModelColour");
-        this.textures = new GlTexture().store(GL_RGBA8, Integer.numberOfTrailingZeros(ModelFactory.MODEL_TEXTURE_SIZE), ModelFactory.MODEL_TEXTURE_SIZE*3*256,ModelFactory.MODEL_TEXTURE_SIZE*2*256).name("ModelTextures");
+        this.modelBuffer = RenderBackendFactory.get().createBuffer(MODEL_SIZE * (1<<16)).name("ModelData");
+        this.modelColourBuffer = RenderBackendFactory.get().createBuffer(4 * (1<<16)).name("ModelColour");
+        this.textures = RenderBackendFactory.get().createTexture()
+                .storeUploadable(GL_RGBA8,
+                        Integer.numberOfTrailingZeros(ModelFactory.MODEL_TEXTURE_SIZE),
+                        ModelFactory.MODEL_TEXTURE_SIZE*3*256,
+                        ModelFactory.MODEL_TEXTURE_SIZE*2*256)
+                .name("ModelTextures");
 
 
         // MC 1.21.1: TextureAtlas.mipLevel is now private, use accessor mixin
@@ -39,6 +48,15 @@ public class ModelStore {
         glSamplerParameteri(this.blockSampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glSamplerParameteri(this.blockSampler, GL_TEXTURE_MIN_LOD, 0);
         glSamplerParameteri(this.blockSampler, GL_TEXTURE_MAX_LOD, mipLvl);//Integer.numberOfTrailingZeros(ModelFactory.MODEL_TEXTURE_SIZE)
+
+        this.atlasSampler = RenderBackendFactory.get().createSampler(
+                SamplerDesc.builder()
+                        .filter(SamplerDesc.Filter.NEAREST, SamplerDesc.Filter.NEAREST)
+                        .mipFilter(SamplerDesc.MipFilter.LINEAR)
+                        .wrap(SamplerDesc.Wrap.CLAMP_TO_EDGE, SamplerDesc.Wrap.CLAMP_TO_EDGE)
+                        .lod(0, mipLvl)
+                        .label("ModelAtlasSampler")
+                        .build());
     }
 
 
@@ -46,21 +64,25 @@ public class ModelStore {
         this.modelBuffer.free();
         this.modelColourBuffer.free();
         this.textures.free();
+        this.atlasSampler.close();
         glDeleteSamplers(this.blockSampler);
     }
 
 
     public void bind(int modelBindingIndex, int colourBindingIndex, int textureBindingIndex) {
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, modelBindingIndex, this.modelBuffer.id);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, colourBindingIndex, this.modelColourBuffer.id);
-        glBindTextureUnit(textureBindingIndex, this.textures.id);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, modelBindingIndex, this.modelBuffer.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, colourBindingIndex, this.modelColourBuffer.id());
+        bindTextureUnit(textureBindingIndex, this.textures.id());
         glBindSampler(textureBindingIndex, this.blockSampler);
     }
 
     /** Bind the model buffers through a backend render encoder. */
     public void bindBuffers(me.cortex.voxy.client.core.gpu.RenderEncoder encoder,
-                            int modelBindingIndex, int colourBindingIndex) {
+                            int modelBindingIndex, int colourBindingIndex,
+                            int atlasBindingIndex) {
         encoder.setBuffer(modelBindingIndex, this.modelBuffer, 0);
         encoder.setBuffer(colourBindingIndex, this.modelColourBuffer, 0);
+        encoder.setTexture(atlasBindingIndex, this.textures);
+        encoder.setSampler(atlasBindingIndex, this.atlasSampler);
     }
 }

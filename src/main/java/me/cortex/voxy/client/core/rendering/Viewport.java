@@ -1,6 +1,6 @@
 package me.cortex.voxy.client.core.rendering;
 
-import me.cortex.voxy.client.core.gl.GlBuffer;
+import me.cortex.voxy.client.core.gpu.IGpuBuffer;
 import me.cortex.voxy.client.core.rendering.util.DepthFramebuffer;
 import me.cortex.voxy.client.core.rendering.util.HiZBuffer;
 // TODO: FogParameters removed in Sodium 0.6.x - fog rendering disabled for now
@@ -124,5 +124,5 @@ public abstract class Viewport <A extends Viewport<A>> {
         return (A) this;
     }
 
-    public abstract GlBuffer getRenderList();
+    public abstract IGpuBuffer getRenderList();
 }

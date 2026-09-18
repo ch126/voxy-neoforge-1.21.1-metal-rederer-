@@ -74,6 +74,27 @@ public class VoxyRenderSystem {
 
     private final AbstractRenderPipeline pipeline;
 
+    private static final long METAL_BAKE_BUDGET_STEADY_NS = 900_000L;
+    private static final long METAL_BAKE_WARMUP_NS = parseMetalBakeWarmupNs();
+
+    private static long parseMetalBakeWarmupNs() {
+        String value = System.getenv("VOXY_BAKE_WARMUP_MS");
+        if (value == null || value.isBlank()) return 8_000_000L;
+        try {
+            return (long) (Float.parseFloat(value.trim()) * 1_000_000L);
+        } catch (NumberFormatException ignored) {
+            return 8_000_000L;
+        }
+    }
+
+    private long getMetalBakeBudgetNs() {
+        if (METAL_BAKE_WARMUP_NS <= 0) return METAL_BAKE_BUDGET_STEADY_NS;
+        int backlog = this.modelService.getProcessingCount();
+        if (backlog > 128) return Math.max(METAL_BAKE_BUDGET_STEADY_NS, METAL_BAKE_WARMUP_NS);
+        if (backlog > 8) return Math.max(METAL_BAKE_BUDGET_STEADY_NS, METAL_BAKE_WARMUP_NS / 2);
+        return METAL_BAKE_BUDGET_STEADY_NS;
+    }
+
     /** Accessor exposed for the Metal compositing mixin so it can read the IOSurface bridge. */
     public AbstractRenderPipeline getPipeline() {
         return this.pipeline;
@@ -238,6 +259,19 @@ public class VoxyRenderSystem {
             // Metal owns its state and renders into the IOSurface bridge.
             this.pipeline.preSetup(viewport);
             this.pipeline.runPipeline(viewport, 0, viewport.width, viewport.height);
+
+            // Keep the renderer's CPU-side lifecycle advancing on Metal as
+            // well as OpenGL. setCenterAndProcess creates the top-level LOD
+            // nodes which start storage reads; UploadStream.tick retires
+            // staged GPU copies; modelService.tick drains texture bakes.
+            // Returning before this block leaves a healthy persistent world
+            // permanently at topNodes=0.
+            UploadStream.INSTANCE.tick();
+            while (this.renderDistanceTracker.setCenterAndProcess(viewport.cameraX, viewport.cameraZ)
+                    && VoxyClient.isFrexActive());
+            do {
+                this.modelService.tick(this.getMetalBakeBudgetNs());
+            } while (VoxyClient.isFrexActive() && !this.modelService.areQueuesEmpty());
             return;
         }
 
@@ -500,7 +534,12 @@ public class VoxyRenderSystem {
     }
 
     private static long getGeometryBufferSize() {
-        long geometryCapacity = Math.min((1L<<(64-Long.numberOfLeadingZeros(Capabilities.INSTANCE.ssboMaxSize-1)))<<1, 1L<<32)-1024/*(1L<<32)-1024*/;
+        long ssboMaxSize = Capabilities.INSTANCE.ssboMaxSize;
+        if (ssboMaxSize <= 0) {
+            ssboMaxSize = me.cortex.voxy.client.core.gpu.RenderBackendFactory.get().getMaxSSBOSize();
+        }
+        if (ssboMaxSize <= 0) ssboMaxSize = 1L << 30;
+        long geometryCapacity = Math.min((1L<<(64-Long.numberOfLeadingZeros(ssboMaxSize-1)))<<1, 1L<<32)-1024/*(1L<<32)-1024*/;
         if (Capabilities.INSTANCE.isIntel) {
             geometryCapacity = Math.max(geometryCapacity, 1L<<30);//intel moment, force min 1gb
         }

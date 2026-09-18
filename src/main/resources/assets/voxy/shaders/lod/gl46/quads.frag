@@ -211,14 +211,15 @@ void main() {
         return;
     }
 
-#ifndef VOXY_NO_ATLAS
+#ifndef VOXY_NO_DEPTH_BOUND
     //Check the minimum bounding texture and ensure we are greater than it
     if (gl_FragCoord.z < texelFetch(depthTex, ivec2(gl_FragCoord.xy), 0).r) {
         discard;
         return;
     }
+#endif
 
-
+#ifndef VOXY_NO_ATLAS
     //Also, small quad is really fking over the mipping level somehow
     #ifndef TRANSLUCENT
     colour.a = 1.0f;
@@ -234,7 +235,7 @@ void main() {
         return;
         #endif
     }
-#endif // VOXY_NO_ATLAS — closes the depth-bounding + alpha-discard block above
+#endif // VOXY_NO_ATLAS
 
     #ifndef PATCHED_SHADER_ALLOW_DERIVATIVES
     if (gl_HelperInvocation) {
@@ -309,4 +310,3 @@ colour = textureGrad(blockModelAtlas, texPos, dx, dy);
 //#else
 //colour = texture(blockModelAtlas, texPos);
 //#endif
-

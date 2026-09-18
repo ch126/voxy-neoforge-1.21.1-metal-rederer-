@@ -12,6 +12,7 @@ import me.cortex.voxy.client.core.rendering.post.FullscreenBlit;
 import me.cortex.voxy.client.core.rendering.section.backend.AbstractSectionRenderer;
 import me.cortex.voxy.client.core.rendering.util.DepthFramebuffer;
 import me.cortex.voxy.client.core.rendering.util.DownloadStream;
+import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.util.TrackedObject;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL30;
@@ -321,13 +322,13 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         //    functionally correct.
         viewport.hiZBuffer.ensureAllocated(viewport.width, viewport.height);
 
-        // 2b) Lazy-allocate the Metal-side depth texture for our render pass.
-        //     D24S8 matches AbstractRenderPipeline.fb's GL format; the encoder
-        //     pass clears it to 1.0 (far plane) each frame.
+        // 2b) Lazy-allocate a pure, sampleable Metal depth texture. The stencil
+        //     aspect is unused by this pass, and Depth24Stencil8 is not
+        //     supported natively on Apple Silicon.
         if (this.metalDepthTex == null || this.metalDepthWidth != fbw || this.metalDepthHeight != fbh) {
             if (this.metalDepthTex != null) this.metalDepthTex.free();
             this.metalDepthTex = backend.createTexture()
-                    .store(org.lwjgl.opengl.GL30C.GL_DEPTH24_STENCIL8, 1, fbw, fbh)
+                    .store(org.lwjgl.opengl.GL30C.GL_DEPTH_COMPONENT32F, 1, fbw, fbh)
                     .name("VoxyMetalDepth");
             this.metalDepthWidth = fbw;
             this.metalDepthHeight = fbh;
@@ -350,6 +351,34 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         @SuppressWarnings({"rawtypes", "unchecked"})
         AbstractSectionRenderer rs = (AbstractSectionRenderer) this.sectionRenderer;
         rs.buildDrawCalls(viewport);
+
+        // Metal's indexed-indirect API does not propagate baseInstance to the
+        // translated GLSL builtin. MetalRenderEncoder mirrors baseInstance via
+        // setVertexBytes, so the CPU must see commandGen's writes before the
+        // render pass starts. submit() is synchronous in this backend.
+        backend.submit();
+
+        if (this.metalFrame % 600 == 300
+                && viewport instanceof me.cortex.voxy.client.core.rendering.section.backend.mdic.MDICViewport mv) {
+            int renderSections = -1;
+            int opaque = -1;
+            int translucent = -1;
+            int temporal = -1;
+            if (mv.getRenderList() instanceof me.cortex.voxy.client.core.metal.MetalBuffer list) {
+                renderSections = org.lwjgl.system.MemoryUtil.memGetInt(list.getContentsPtr());
+            }
+            if (mv.drawCountCallBuffer instanceof me.cortex.voxy.client.core.metal.MetalBuffer counts) {
+                long address = counts.getContentsPtr();
+                opaque = org.lwjgl.system.MemoryUtil.memGetInt(address + 12);
+                translucent = org.lwjgl.system.MemoryUtil.memGetInt(address + 16);
+                temporal = org.lwjgl.system.MemoryUtil.memGetInt(address + 20);
+            }
+            Logger.info("Metal LOD: topNodes=" + this.traversal.getTopNodeCount()
+                    + ", activeSections=" + this.nodeManager.getActiveSectionCount()
+                    + ", geometrySections=" + this.nodeManager.getGeometrySectionCount()
+                    + ", renderSections=" + renderSections
+                    + ", draws=" + opaque + "/" + translucent + "/" + temporal);
+        }
 
         // 5) Render pass against bridge color + Voxy-owned depth. Clears both
         //    each frame (no MC-depth import on Metal yet, so we render every

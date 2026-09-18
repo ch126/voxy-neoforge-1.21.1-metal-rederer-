@@ -24,6 +24,15 @@ layout(location = 0) out flat uvec4 interData;
 layout(location = 1) out vec2 uv;
 #endif
 
+#ifdef VOXY_METAL_BI_FIX
+// Metal's indexed-indirect draw does not reliably expose baseInstance to the
+// SPIR-V-crossed gl_BaseInstance builtin. The encoder mirrors the command's
+// baseInstance through setVertexBytes at binding 6 for each draw.
+layout(binding = 6, std140) uniform VoxyMetalPerDrawUBO {
+    uint voxyMetalDrawIndex;
+};
+#endif
+
 #ifdef DEBUG_RENDER
 layout(location = 7) out flat uint quadDebug;
 #endif
@@ -37,7 +46,12 @@ void main() {
     taaOffset = taaShift();
 
     QuadData quad;
-    setupQuad(quad, quadData[uint(gl_VertexID)>>2], positionBuffer[gl_BaseInstance], (gl_VertexID&3) == 1);
+#ifdef VOXY_METAL_BI_FIX
+    uint drawIndex = voxyMetalDrawIndex;
+#else
+    uint drawIndex = uint(gl_BaseInstance);
+#endif
+    setupQuad(quad, quadData[uint(gl_VertexID)>>2], positionBuffer[drawIndex], (gl_VertexID&3) == 1);
 
     uint cornerId = gl_VertexID&3;
     gl_Position = getQuadCornerPos(quad, cornerId);

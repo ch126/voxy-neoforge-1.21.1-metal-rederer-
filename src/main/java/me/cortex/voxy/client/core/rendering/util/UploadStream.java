@@ -82,6 +82,7 @@ public class UploadStream {
                 int attempts = 10;
                 while (--attempts != 0 && this.caddr == SIZE_LIMIT) {
                     glFinish();
+                    flushBackendFences();
                     this.tick(false);
                     this.caddr = this.allocationArena.alloc((int) size);
                 }
@@ -172,6 +173,12 @@ public class UploadStream {
      */
     public IGpuPersistentBuffer getUploadBuffer() {
         return this.uploadBuffer;
+    }
+
+    static void flushBackendFences() {
+        if (RenderBackendFactory.get() instanceof me.cortex.voxy.client.core.metal.MetalRenderBackend metal) {
+            metal.flushForFenceProgress();
+        }
     }
 
     private record UploadFrame(IGpuFence fence, LongArrayList allocations) {}

@@ -1,8 +1,9 @@
 package me.cortex.voxy.client.core.rendering.util;
 
 
-import me.cortex.voxy.client.core.gl.GlFence;
-import me.cortex.voxy.client.core.gl.GlPersistentMappedBuffer;
+import me.cortex.voxy.client.core.gpu.IGpuFence;
+import me.cortex.voxy.client.core.gpu.IGpuPersistentBuffer;
+import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
 import me.cortex.voxy.common.Logger;
 import me.cortex.voxy.common.util.AllocationArena;
 
@@ -19,15 +20,15 @@ public class RawDownloadStream {
     //NOTE: after the callback returns the pointer is no longer valid for client use
     public interface IDownloadCompletedCallback{void accept(long ptr);}
     private record DownloadFragment(int allocation, IDownloadCompletedCallback callback){}
-    private record DownloadFrame(GlFence fence, DownloadFragment[] fragments) {}
+    private record DownloadFrame(IGpuFence fence, DownloadFragment[] fragments) {}
 
-    private final GlPersistentMappedBuffer downloadBuffer;
+    private final IGpuPersistentBuffer downloadBuffer;
     private final AllocationArena allocationArena = new AllocationArena();
     private final ArrayList<DownloadFragment> frameFragments = new ArrayList<>();
     private final Deque<DownloadFrame> frames = new ArrayDeque<>();
 
     public RawDownloadStream(int size) {
-        this.downloadBuffer = new GlPersistentMappedBuffer(size, GL_MAP_READ_BIT|GL_MAP_COHERENT_BIT).name("RawDownloadStream");
+        this.downloadBuffer = RenderBackendFactory.get().createPersistentBuffer(size, GL_MAP_READ_BIT|GL_MAP_COHERENT_BIT).name("RawDownloadStream");
         this.allocationArena.setLimit(size);
     }
 
@@ -37,6 +38,7 @@ public class RawDownloadStream {
             Logger.warn("Raw download stream full, preemptively committing, this could cause bad things to happen");
             //Hit the download limit, attempt to free
             glFinish();
+            UploadStream.flushBackendFences();
             this.tick();
             allocation = (int) this.allocationArena.alloc(size);
             if (allocation == AllocationArena.SIZE_LIMIT) {
@@ -53,7 +55,7 @@ public class RawDownloadStream {
         if (!this.frameFragments.isEmpty()) {
             var fragments = this.frameFragments.toArray(new DownloadFragment[0]);
             this.frameFragments.clear();
-            this.frames.add(new DownloadFrame(new GlFence(), fragments));
+            this.frames.add(new DownloadFrame(RenderBackendFactory.get().createFence(), fragments));
         }
     }
 
@@ -76,13 +78,18 @@ public class RawDownloadStream {
     }
 
     public int getBufferId() {
-        return this.downloadBuffer.id;
+        return this.downloadBuffer.id();
+    }
+
+    public long getBufferAddr() {
+        return this.downloadBuffer.addr();
     }
 
     public void free() {
         glFinish();
         this.tick();
-        GlFence fence = new GlFence();
+        UploadStream.flushBackendFences();
+        IGpuFence fence = RenderBackendFactory.get().createFence();
         while (!fence.signaled()) {
             glFinish();
         }

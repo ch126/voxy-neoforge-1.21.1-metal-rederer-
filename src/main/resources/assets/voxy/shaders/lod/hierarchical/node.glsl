@@ -35,12 +35,11 @@ uvec4 unpackNode(out UnpackedNode node, uint nodeId) {
     node.lodLevel = compactedNode.x >> 28;
     node.rawPos = compactedNode.xy;
     {
-        int y = ((int(compactedNode.x)<<4)>>24);
-        int x = (int(compactedNode.y)<<4)>>8;
-        int z = int((int(compactedNode.x)&((1<<20)-1))<<4);
-        z |= int(compactedNode.y>>28);
-        z <<= 8;
-        z >>= 8;
+        // Explicit signed extraction avoids SPIR-V -> MSL shift/sign-extension
+        // differences for negative section coordinates.
+        int y = bitfieldExtract(int(compactedNode.x), 20, 8);
+        int x = bitfieldExtract(int(compactedNode.y), 4, 24);
+        int z = bitfieldExtract(int(((compactedNode.x&((1u<<20)-1))<<4)|(compactedNode.y>>28)), 0, 24);
         node.pos = ivec3(x, y, z);
     }
 
@@ -72,6 +71,10 @@ bool childListIsEmpty(in UnpackedNode node) {
 
 bool hasRequested(in UnpackedNode node) {
     return (node.flags&1u) != 0u;
+}
+
+bool hasKnownChildren(in UnpackedNode node) {
+    return (node.flags&2u) != 0u;
 }
 
 uint getMesh(in UnpackedNode node) {
@@ -107,5 +110,7 @@ void markRequested(inout UnpackedNode node) {
 }
 
 void debugDumpNode(in UnpackedNode node) {
+#if defined(DEBUG) && !defined(VOXY_VULKAN)
     printf("Node %d, %d@[%d,%d,%d], flags: %d, mesh: %d, ChildPtr: %d", node.nodeId, node.lodLevel, node.pos.x, node.pos.y, node.pos.z, node.flags, node.meshPtr, node.childPtr);
+#endif
 }

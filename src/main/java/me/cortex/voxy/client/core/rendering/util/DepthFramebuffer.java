@@ -1,18 +1,19 @@
 package me.cortex.voxy.client.core.rendering.util;
 
-import me.cortex.voxy.client.core.gl.GlFramebuffer;
-import me.cortex.voxy.client.core.gl.GlTexture;
-import org.lwjgl.system.MemoryStack;
+import me.cortex.voxy.client.core.gpu.BackendType;
+import me.cortex.voxy.client.core.gpu.IGpuFramebuffer;
+import me.cortex.voxy.client.core.gpu.IGpuTexture;
+import me.cortex.voxy.client.core.gpu.RenderBackend;
+import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
 
-import static org.lwjgl.opengl.ARBDirectStateAccess.nglClearNamedFramebufferfv;
-import static org.lwjgl.opengl.GL11C.GL_DEPTH;
 import static org.lwjgl.opengl.GL14.GL_DEPTH_COMPONENT24;
 import static org.lwjgl.opengl.GL30C.*;
 
 public class DepthFramebuffer {
     private final int depthType;
-    private GlTexture depthBuffer;
-    public final GlFramebuffer framebuffer = new GlFramebuffer();
+    private final RenderBackend backend = RenderBackendFactory.get();
+    private IGpuTexture depthBuffer;
+    public final IGpuFramebuffer framebuffer = this.backend.createFramebuffer();
 
     public DepthFramebuffer() {
         this(GL_DEPTH_COMPONENT24);
@@ -27,7 +28,7 @@ public class DepthFramebuffer {
             if (this.depthBuffer != null) {
                 this.depthBuffer.free();
             }
-            this.depthBuffer = new GlTexture().store(this.depthType, 1, width, height);
+            this.depthBuffer = this.backend.createTexture().store(this.depthType, 1, width, height);
             this.framebuffer.bind(this.getDepthAttachmentType(), this.depthBuffer).verify();
             return true;
         }
@@ -43,12 +44,12 @@ public class DepthFramebuffer {
     }
 
     public void clear(float depth) {
-        try (var stack = MemoryStack.stackPush()) {
-            nglClearNamedFramebufferfv(this.framebuffer.id, GL_DEPTH, 0, stack.nfloat(depth));
-        }
+        // GL clears immediately (with a GL 4.1 fallback); Metal clears this
+        // attachment through the render-pass load action when it is used.
+        this.backend.clearDepthFramebuffer(this.framebuffer.id(), depth);
     }
 
-    public GlTexture getDepthTex() {
+    public IGpuTexture getDepthTex() {
         return this.depthBuffer;
     }
 
@@ -60,7 +61,9 @@ public class DepthFramebuffer {
     }
 
     public void bind() {
-        glBindFramebuffer(GL_FRAMEBUFFER, this.framebuffer.id);
+        if (this.backend.getType() == BackendType.OPENGL) {
+            glBindFramebuffer(GL_FRAMEBUFFER, this.framebuffer.id());
+        }
     }
 
     public int getFormat() {

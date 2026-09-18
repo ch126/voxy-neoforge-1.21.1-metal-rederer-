@@ -5,6 +5,8 @@ import me.cortex.voxy.client.core.gl.GlFramebuffer;
 import me.cortex.voxy.client.core.gl.GlTexture;
 import me.cortex.voxy.client.core.gl.shader.Shader;
 import me.cortex.voxy.client.core.gl.shader.ShaderType;
+import me.cortex.voxy.client.core.gpu.BackendType;
+import me.cortex.voxy.client.core.gpu.RenderBackendFactory;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager;
 import me.cortex.voxy.client.core.rendering.hierachical.HierarchicalOcclusionTraverser;
@@ -41,12 +43,17 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
     private final boolean useEnvFog;
     private final FullscreenBlit finalBlit;
 
-    private final Shader ssaoCompute = Shader.make()
-            .add(ShaderType.COMPUTE, "voxy:post/ssao.comp")
-            .compile();
+    private final Shader ssaoCompute;
 
     protected NormalRenderPipeline(AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
         super(nodeManager, nodeCleaner, traversal, frexSupplier, false);
+        // The Metal path intentionally skips postOpaquePreTranslucent: it
+        // renders directly into the IOSurface bridge and has no imported MC
+        // depth texture for SSAO yet. Do not ask Apple's GL 4.1 context to
+        // compile a compute shader that can never execute.
+        this.ssaoCompute = RenderBackendFactory.get().getType() == BackendType.OPENGL
+                ? Shader.make().add(ShaderType.COMPUTE, "voxy:post/ssao.comp").compile()
+                : null;
         this.useEnvFog = VoxyConfig.CONFIG.useEnvironmentalFog;
         java.util.Map<String, String> defines = new java.util.LinkedHashMap<>();
         defines.put("EMIT_COLOUR", "");
@@ -77,12 +84,12 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
             glTextureParameterf(this.colourTex.id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             glTextureParameterf(this.colourSSAOTex.id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTextureParameterf(this.colourSSAOTex.id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glTextureParameterf(this.fb.getDepthTex().id, GL_DEPTH_STENCIL_TEXTURE_MODE, GL_DEPTH_COMPONENT);
+            glTextureParameterf(this.fb.getDepthTex().id(), GL_DEPTH_STENCIL_TEXTURE_MODE, GL_DEPTH_COMPONENT);
         }
 
-        this.initDepthStencil(sourceFB, this.fb.framebuffer.id, viewport.width, viewport.height, viewport.width, viewport.height);
+        this.initDepthStencil(sourceFB, this.fb.framebuffer.id(), viewport.width, viewport.height, viewport.width, viewport.height);
 
-        return this.fb.getDepthTex().id;
+        return this.fb.getDepthTex().id();
     }
 
     @Override
@@ -98,7 +105,7 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
 
 
         glBindImageTexture(0, this.colourSSAOTex.id, 0, false,0, GL_READ_WRITE, GL_RGBA8);
-        glBindTextureUnit(1, this.fb.getDepthTex().id);
+        glBindTextureUnit(1, this.fb.getDepthTex().id());
         glBindTextureUnit(2, this.colourTex.id);
 
         glDispatchCompute((viewport.width+31)/32, (viewport.height+31)/32, 1);
@@ -125,7 +132,7 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
 
         glEnable(GL_BLEND);
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        AbstractRenderPipeline.transformBlitDepth(this.finalBlit, this.fb.getDepthTex().id, sourceFrameBuffer, viewport, new Matrix4f(viewport.vanillaProjection).mul(viewport.modelView));
+        AbstractRenderPipeline.transformBlitDepth(this.finalBlit, this.fb.getDepthTex().id(), sourceFrameBuffer, viewport, new Matrix4f(viewport.vanillaProjection).mul(viewport.modelView));
         glDisable(GL_BLEND);
         //glBlitNamedFramebuffer(this.fbSSAO.id, sourceFrameBuffer, 0,0, viewport.width, viewport.height, 0,0, viewport.width, viewport.height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
@@ -143,7 +150,9 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
     @Override
     public void free() {
         this.finalBlit.delete();
-        this.ssaoCompute.free();
+        if (this.ssaoCompute != null) {
+            this.ssaoCompute.free();
+        }
         this.fbSSAO.free();
         if (this.colourTex != null) {
             this.colourTex.free();

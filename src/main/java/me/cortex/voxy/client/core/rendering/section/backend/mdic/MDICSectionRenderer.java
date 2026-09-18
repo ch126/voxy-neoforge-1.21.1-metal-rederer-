@@ -21,6 +21,7 @@ import me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer;
 import me.cortex.voxy.client.core.rendering.util.UploadStream;
 import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.common.Logger;
+import me.cortex.voxy.common.util.JomlMemory;
 import me.cortex.voxy.common.world.WorldEngine;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.Direction;
@@ -88,7 +89,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     ShaderLoader.parse("voxy:lod/gl46/cmdgen.comp"),
                     cmdgenDefines(),
                     null, null,
-                    32, 1, 1,
+                    128, 1, 1,
                     "MDICSectionRenderer.cmdgen"));
     // M12 chunk 3: commandGen prepass is dispatched via ComputeEncoder; no
     // cached glProgram id needed.
@@ -140,7 +141,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     ShaderLoader.parse(Capabilities.INSTANCE.subgroup ? "voxy:util/prefixsum/inital3.comp" : "voxy:util/prefixsum/simple.comp"),
                     java.util.Map.of("IO_BUFFER", "0"),
                     null, null,
-                    32, 1, 1,
+                    256, 1, 1,
                     "MDICSectionRenderer.prefixSum"));
     // M12 chunk 1: prefixSum prepass is dispatched via ComputeEncoder, so it
     // does not need a cached glProgram id (the encoder pulls it from the
@@ -154,7 +155,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                             "TRANSLUCENT_DISTANCE_BUFFER_BINDING", "5",
                             "TRANSLUCENT_OFFSET", Integer.toString(TRANSLUCENT_OFFSET)),
                     null, null,
-                    32, 1, 1,
+                    128, 1, 1,
                     "MDICSectionRenderer.translucentGen"));
     // M12 chunk 4: translucentGen prepass is dispatched via ComputeEncoder;
     // no cached glProgram id needed.
@@ -239,18 +240,17 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             java.util.Map<String, String> opaqueDefines = new java.util.LinkedHashMap<>(commonDefines);
             java.util.Map<String, String> translucentDefines = new java.util.LinkedHashMap<>(commonDefines);
             translucentDefines.put("TRANSLUCENT", "");
-            // M12 chunk 6 step 3 follow-up: on non-GL backends the model
-            // texture atlas (ModelTextureBakery) and the depth-bounding
-            // texture aren't bound yet (their callers stay raw GL — see the
-            // M9 file migration order). Inject `VOXY_NO_ATLAS` so quads.frag
-            // skips the atlas-driven sampling + alpha discard + depth-bounds
-            // check and instead emits a deterministic per-instance debug
-            // color. Lets us see Voxy's LOD chunks on Metal as
-            // distinct-coloured blocks while the real texture path is still
-            // pending.
             if (this.backend.getType() != BackendType.OPENGL) {
-                opaqueDefines.put("VOXY_NO_ATLAS", "");
-                translucentDefines.put("VOXY_NO_ATLAS", "");
+                // MC depth is not shared with Metal yet. Keep only that test
+                // disabled; the Metal bakery now supplies the real model atlas.
+                opaqueDefines.put("VOXY_NO_DEPTH_BOUND", "");
+                translucentDefines.put("VOXY_NO_DEPTH_BOUND", "");
+                opaqueDefines.put("VOXY_METAL_BI_FIX", "");
+                translucentDefines.put("VOXY_METAL_BI_FIX", "");
+                if ("1".equals(System.getenv("VOXY_BAKERY_OFF"))) {
+                    opaqueDefines.put("VOXY_NO_ATLAS", "");
+                    translucentDefines.put("VOXY_NO_ATLAS", "");
+                }
             }
 
             // NOTE: MDIC terrain pipelines do NOT opt into supportIndirectCommandBuffers.
@@ -323,16 +323,16 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         
         var mat = new Matrix4f(viewport.MVP);
         mat.translate(-viewport.innerTranslation.x, -viewport.innerTranslation.y, -viewport.innerTranslation.z);
-        mat.getToAddress(ptr); ptr += 4*4*4;
+        JomlMemory.put(mat, ptr); ptr += 4*4*4;
 
-        viewport.section.getToAddress(ptr); ptr += 4*3;
+        JomlMemory.put(viewport.section, ptr); ptr += 4*3;
 
         if (viewport.frameId<0) {
             Logger.error("Frame ID negative, this will cause things to break, wrapping around");
             viewport.frameId &= 0x7fffffff;
         }
         MemoryUtil.memPutInt(ptr, viewport.frameId&0x7fffffff); ptr += 4;
-        viewport.innerTranslation.getToAddress(ptr); ptr += 4*3;
+        JomlMemory.put(viewport.innerTranslation, ptr); ptr += 4*3;
 
         // Earth curvature radius: 0 = disabled, otherwise compute radius in blocks
         // DH uses: radius = 6371000.0 / ratio (Earth radius in meters / ratio factor)
@@ -445,18 +445,15 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
      */
     public void renderOpaqueMetal(me.cortex.voxy.client.core.gpu.RenderEncoder encoder, MDICViewport viewport) {
         if (this.geometryManager.getSectionCount() == 0) return;
-        // The uniform was already uploaded inside buildDrawCalls; uploading
-        // again here would clobber the SceneUniform with a new pointer in the
-        // same frame. Only re-upload if the call path skipped buildDrawCalls.
-        // Conservative: re-upload — UploadStream coalesces and this matches
-        // the GL renderOpaque pattern.
-        this.uploadUniformBuffer(viewport);
+        // buildDrawCalls uploaded this frame's uniform before the compute pass.
         if (this.terrainPipeline == null) {
             // Iris-patched path — GL-only by construction (see 1e2a1190). Should
             // never hit on Metal because RenderPipelineFactory gates Iris pipeline.
             return;
         }
         int maxDrawCount = Math.min((int)(this.geometryManager.getSectionCount()*4.4+128), 400_000);
+        maxDrawCount = metalDrawCount(viewport, 4L * 3, maxDrawCount);
+        if (maxDrawCount == 0) return;
         this.renderTerrainMetal(encoder, this.terrainPipeline, viewport, 0L, maxDrawCount);
     }
 
@@ -472,6 +469,8 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         if (this.geometryManager.getSectionCount() == 0) return;
         if (this.terrainPipeline == null) return;
         int maxDrawCount = Math.min(this.geometryManager.getSectionCount(), 100_000);
+        maxDrawCount = metalDrawCount(viewport, 4L * 5, maxDrawCount);
+        if (maxDrawCount == 0) return;
         this.renderTerrainMetal(encoder, this.terrainPipeline, viewport,
                 /*indirectOffset bytes*/ (long) TEMPORAL_OFFSET * 5L * 4L,
                 maxDrawCount);
@@ -491,9 +490,22 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         if (this.geometryManager.getSectionCount() == 0) return;
         if (this.translucentTerrainPipeline == null) return;
         int translucentMax = Math.min(this.geometryManager.getSectionCount(), 100_000);
+        translucentMax = metalDrawCount(viewport, 4L * 4, translucentMax);
+        if (translucentMax == 0) return;
         this.renderTerrainMetal(encoder, this.translucentTerrainPipeline, viewport,
                 /*indirectOffset bytes*/ (long) TRANSLUCENT_OFFSET * 5L * 4L,
                 translucentMax);
+    }
+
+    private static int metalDrawCount(MDICViewport viewport, long countOffset, int upperBound) {
+        if (viewport.drawCountCallBuffer instanceof me.cortex.voxy.client.core.metal.MetalBuffer buffer) {
+            long address = buffer.getContentsPtr();
+            if (address != 0) {
+                int actual = MemoryUtil.memGetInt(address + countOffset);
+                if (Integer.compareUnsigned(actual, upperBound) < 0) return actual;
+            }
+        }
+        return upperBound;
     }
 
     private void renderTerrainMetal(me.cortex.voxy.client.core.gpu.RenderEncoder encoder,
@@ -505,10 +517,9 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
         encoder.setBuffer(0, this.uniform, 0);
         encoder.setBuffer(1, this.geometryManager.getGeometryBuffer(), 0);
         encoder.setBuffer(2, this.geometryManager.getMetadataBuffer(), 0);
-        this.modelStore.bindBuffers(encoder, 3, 4);
+        this.modelStore.bindBuffers(encoder, 3, 4, 0);
         encoder.setBuffer(5, viewport.positionScratchBuffer, 0);
-        // Texture / sampler bindings 0 (modelAtlas), 1 (lightmap), 2
-        // (depthBoundingBuffer) intentionally skipped — see method javadoc.
+        LightMapHelper.bindMetal(encoder, 1, viewport.frameId);
 
         encoder.bindIndexBuffer(me.cortex.voxy.client.core.rendering.util.SharedIndexBuffer.INSTANCE.getBuffer(),
                 me.cortex.voxy.client.core.gpu.RenderEncoder.INDEX_TYPE_UINT16, 0);

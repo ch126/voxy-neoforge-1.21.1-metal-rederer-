@@ -2,7 +2,9 @@
 
 //TODO: increase local size
 #define LOCAL_SIZE_MSK ((1<<LOCAL_SIZE_BITS)-1)
+#ifndef LOCAL_SIZE
 #define LOCAL_SIZE (1<<LOCAL_SIZE_BITS)
+#endif
 layout(local_size_x=LOCAL_SIZE) in;//, local_size_y=1
 
 #import <voxy:lod/frustum.glsl>
@@ -114,8 +116,12 @@ void traverse(in UnpackedNode node) {
     } else {
         //It is visible, TODO: maybe do a more detailed hiz test? (or make it so that )
 
+        // Empty LOD meshes can still represent non-empty descendants. Do not
+        // accept such a parent as a terminal render node or it creates holes.
+        bool emptyMeshNeedsChildren = isEmptyMesh(node) && hasKnownChildren(node);
+
         //Only decend if not a root node
-        if (node.lodLevel!=0 && shouldDecend()) {
+        if (node.lodLevel!=0 && (shouldDecend() || emptyMeshNeedsChildren)) {
             if (hasChildren(node)) {
                 //printf("A");
                 enqueueChildren(node);
@@ -125,7 +131,9 @@ void traverse(in UnpackedNode node) {
                 //TODO: use self mesh (is error state if it doesnt have one since all leaf nodes should have a mesh)
                 // Basicly guarenteed to have a mesh, if it doesnt it is very very bad and incorect since its a violation of the graph properties
                 // that all leaf nodes must contain a mesh
-                enqueueSelfForRender(node);
+                if (!emptyMeshNeedsChildren) {
+                    enqueueSelfForRender(node);
+                }
             }
         } else {
             if (hasMesh(node)) {

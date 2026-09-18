@@ -5,9 +5,7 @@ import it.unimi.dsi.fastutil.ints.IntConsumer;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import me.cortex.voxy.client.TimingStatistics;
-import me.cortex.voxy.client.core.gl.GlBuffer;
-import me.cortex.voxy.client.core.gl.shader.Shader;
-import me.cortex.voxy.client.core.gl.shader.ShaderType;
+import me.cortex.voxy.client.core.gpu.IGpuBuffer;
 import me.cortex.voxy.client.core.rendering.GeometryCache;
 import me.cortex.voxy.client.core.rendering.SectionUpdateRouter;
 import me.cortex.voxy.client.core.rendering.building.BuiltSection;
@@ -32,11 +30,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.StampedLock;
 
-import static org.lwjgl.opengl.ARBUniformBufferObject.glBindBufferBase;
-import static org.lwjgl.opengl.GL30C.glUniform1ui;
-import static org.lwjgl.opengl.GL42C.GL_UNIFORM_BARRIER_BIT;
-import static org.lwjgl.opengl.GL42C.glMemoryBarrier;
-import static org.lwjgl.opengl.GL43C.*;
 
 //TODO: create an "async upload stream", that is, the upload stream is a raw mapped buffer pointer that can be written to
 // which is then synced to the gpu on "render thread sync",
@@ -103,6 +96,7 @@ public class AsyncNodeManager {
             }
         });
         this.thread.setName("Async Node Manager");
+        this.thread.setDaemon(true);
 
         this.geometryManager = new BasicAsyncGeometryManager(((BasicSectionGeometryData)geometryData).getMaxSectionCount(), this.geometryCapacity);
 
@@ -166,19 +160,28 @@ public class AsyncNodeManager {
         return resultSet;
     }
 
-    private final Shader scatterWrite = Shader.make()
-            .define("INPUT_BUFFER_BINDING", 0)
-            .define("OUTPUT_BUFFER1_BINDING", 1)
-            .define("OUTPUT_BUFFER2_BINDING", 2)
-            .add(ShaderType.COMPUTE, "voxy:util/scatter.comp")
-            .compile();
+    private static final int SCATTER_PUSH_BINDING = 14;
+    private final me.cortex.voxy.client.core.gpu.RenderBackend backend =
+            me.cortex.voxy.client.core.gpu.RenderBackendFactory.get();
 
-    private final Shader multiMemcpy = Shader.make()
-            .define("INPUT_HEADER_BUFFER_BINDING", 0)
-            .define("INPUT_DATA_BUFFER_BINDING", 1)
-            .define("OUTPUT_BUFFER_BINDING", 2)
-            .add(ShaderType.COMPUTE, "voxy:util/memcpy.comp")
-            .compile();
+    private final me.cortex.voxy.client.core.gpu.IGpuPipeline scatterWrite =
+            this.backend.createComputePipeline(new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
+                    me.cortex.voxy.client.core.gl.shader.ShaderLoader.parse("voxy:util/scatter.comp"),
+                    java.util.Map.of(
+                            "INPUT_BUFFER_BINDING", "0",
+                            "OUTPUT_BUFFER1_BINDING", "1",
+                            "OUTPUT_BUFFER2_BINDING", "2",
+                            "PUSH_BINDING", Integer.toString(SCATTER_PUSH_BINDING)),
+                    null, null, 128, 1, 1, "AsyncNodeManager.scatterWrite"));
+
+    private final me.cortex.voxy.client.core.gpu.IGpuPipeline multiMemcpy =
+            this.backend.createComputePipeline(new me.cortex.voxy.client.core.gpu.ComputePipelineDesc(
+                    me.cortex.voxy.client.core.gl.shader.ShaderLoader.parse("voxy:util/memcpy.comp"),
+                    java.util.Map.of(
+                            "INPUT_HEADER_BUFFER_BINDING", "0",
+                            "INPUT_DATA_BUFFER_BINDING", "1",
+                            "OUTPUT_BUFFER_BINDING", "2"),
+                    null, null, 256, 1, 1, "AsyncNodeManager.multiMemcpy"));
 
     private void run() {
         if (this.workCounter.get() <= 0) {
@@ -490,7 +493,7 @@ public class AsyncNodeManager {
 
     private IntConsumer tlnAddCallback; private IntConsumer tlnRemoveCallback;
     //Render thread synchronization
-    public void tick(GlBuffer nodeBuffer, NodeCleaner cleaner) {//TODO: dont pass nodeBuffer here??, do something else thats better
+    public void tick(IGpuBuffer nodeBuffer, NodeCleaner cleaner) {//TODO: dont pass nodeBuffer here??, do something else thats better
         var results = (SyncResults)RESULT_HANDLE.getAndSet(this, null);//Acquire the results
         if (results == null) {//There are no new results to process, return
             return;
@@ -527,18 +530,21 @@ public class AsyncNodeManager {
                 UnsafeUtil.memcpy(upload.scratchDataBuffer.address, UploadStream.INSTANCE.getBaseAddress() + ptr + copies * 16L, scratchSize);
                 UploadStream.INSTANCE.commit();//Commit the buffer
 
-                this.multiMemcpy.bind();
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, UploadStream.INSTANCE.getRawBufferId(), ptr, copies*16L);
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, UploadStream.INSTANCE.getRawBufferId(), ptr+copies*16L, scratchSize);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ((BasicSectionGeometryData) this.geometryData).getGeometryBuffer().id);
-
                 if (copies > 500) {
                     Logger.warn("Large amount of copies, lag will probably happen: " + copies);
                 }
 
-                glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-                glDispatchCompute(copies, 1, 1);//Execute the copies
-                glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+                try (var encoder = this.backend.beginComputePass()) {
+                    encoder.setPipeline(this.multiMemcpy);
+                    encoder.setBuffer(0, UploadStream.INSTANCE.getUploadBuffer(), ptr, copies * 16L);
+                    encoder.setBuffer(1, UploadStream.INSTANCE.getUploadBuffer(), ptr + copies * 16L, scratchSize);
+                    encoder.setBuffer(2, store.getGeometryBuffer(), 0);
+                    encoder.barrier(me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER,
+                            me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER);
+                    encoder.dispatch(copies, 1, 1);
+                    encoder.barrier(me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER,
+                            me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER);
+                }
 
                 TimingStatistics.A.stop();
             }
@@ -554,14 +560,21 @@ public class AsyncNodeManager {
             MemoryUtil.memCopy(results.scatterWriteBuffer.address, UploadStream.INSTANCE.getBaseAddress() + ptr, streamSize);
             UploadStream.INSTANCE.commit();//Commit the buffer
 
-            this.scatterWrite.bind();
-            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, UploadStream.INSTANCE.getRawBufferId(), ptr, streamSize);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, nodeBuffer.id);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ((BasicSectionGeometryData) this.geometryData).getMetadataBuffer().id);
-            glUniform1ui(0, count);
-            glMemoryBarrier(GL_UNIFORM_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT);
-            glDispatchCompute((count+127)/128, 1, 1);
-            glMemoryBarrier(GL_UNIFORM_BARRIER_BIT|GL_SHADER_STORAGE_BARRIER_BIT);
+            try (var encoder = this.backend.beginComputePass();
+                 var stack = org.lwjgl.system.MemoryStack.stackPush()) {
+                encoder.setPipeline(this.scatterWrite);
+                encoder.setBuffer(0, UploadStream.INSTANCE.getUploadBuffer(), ptr, streamSize);
+                encoder.setBuffer(1, nodeBuffer, 0);
+                encoder.setBuffer(2, ((BasicSectionGeometryData) this.geometryData).getMetadataBuffer(), 0);
+                long pushAddress = stack.nmalloc(4);
+                MemoryUtil.memPutInt(pushAddress, count);
+                encoder.setBytes(SCATTER_PUSH_BINDING, pushAddress, 4);
+                encoder.barrier(me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER,
+                        me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER);
+                encoder.dispatch((count + 127) / 128, 1, 1);
+                encoder.barrier(me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER,
+                        me.cortex.voxy.client.core.gpu.ComputeEncoder.BARRIER_SHADER);
+            }
         }
         TimingStatistics.B.stop();
 
@@ -750,14 +763,22 @@ public class AsyncNodeManager {
             result.scatterWriteBuffer.free();
         }
 
-        this.scatterWrite.free();
-        this.multiMemcpy.free();
+        this.scatterWrite.close();
+        this.multiMemcpy.close();
         this.geometryCache.free();
     }
 
     public void addDebug(List<String> debug) {
         debug.add("UC/GC: " + (this.getUsedGeometryCapacity()/(1<<20))+"/"+(this.getGeometryCapacity()/(1<<20)));
         //debug.add("GUQ/NRC: " + this.geometryUpdateQueue.size()+"/"+this.removeBatchQueue.size());
+    }
+
+    public int getActiveSectionCount() {
+        return this.manager.getActiveSectionCount();
+    }
+
+    public int getGeometrySectionCount() {
+        return this.geometryManager.getSectionCount();
     }
 
     public boolean hasWork() {
