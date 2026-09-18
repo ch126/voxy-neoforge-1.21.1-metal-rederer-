@@ -13,6 +13,9 @@
 # Agent orchestration task files
 /.agent/
 
+# Personal IDE configuration
+/.vscode/
+
 # Local deployment scripts (contain SSH config)
 /scripts/deploy.sh
 /scripts/build_and_deploy.sh
