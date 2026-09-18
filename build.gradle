@@ -173,6 +173,42 @@ if (!isInGHA) {
     }
 }
 
+// Backend smoke tests are standalone Java entry points. They intentionally do
+// not run as part of `build`: Metal tests need an Apple GPU and the JNI dylib,
+// while Vulkan tests additionally need a MoltenVK installation.
+def backendSmokeTests = [
+        testShaderCompiler    : 'ShaderCompilerSmokeTest',
+        testMetalRender       : 'MetalRenderBackendSmokeTest',
+        testMetalVertexBuffer : 'MetalVertexBufferSmokeTest',
+        testMetalIcb          : 'MetalIcbSmokeTest',
+        testIOSurfaceBridge   : 'IOSurfaceBridgeSmokeTest',
+        testMetalTriangle     : 'MetalTriangleSmokeTest',
+        testMetalCompute      : 'MetalComputeSmokeTest',
+        testVulkanLoader      : 'VulkanLoaderSmokeTest',
+        testVulkanCompute     : 'VulkanComputeSmokeTest',
+        testVulkanTriangle    : 'VulkanTriangleSmokeTest',
+        testVulkanClear       : 'VulkanClearSmokeTest'
+]
+
+backendSmokeTests.each { taskName, className ->
+    tasks.register(taskName, JavaExec) {
+        group = 'verification'
+        description = "Run the ${className} backend smoke test."
+        classpath = sourceSets.main.runtimeClasspath
+        mainClass = "me.cortex.voxy.tools.${className}"
+        workingDir = rootProject.projectDir
+        standardOutput = System.out
+        errorOutput = System.err
+
+        if (taskName.toString().startsWith('testVulkan')) {
+            def moltenVkIcd = file('/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json')
+            if (moltenVkIcd.exists()) {
+                environment 'VK_ICD_FILENAMES', moltenVkIcd.absolutePath
+            }
+        }
+    }
+}
+
 dependencies {
     // To change the versions see the gradle.properties file
     implementation "net.neoforged:neoforge:${project.neoforge_version}"
@@ -455,6 +491,12 @@ dependencies {
     additionalRuntimeClasspath "org.lwjgl:lwjgl-shaderc:$lwjglVersion:natives-macos-arm64"
     additionalRuntimeClasspath "org.lwjgl:lwjgl-spvc:$lwjglVersion:natives-macos-arm64"
     additionalRuntimeClasspath "org.lwjgl:lwjgl-vulkan:$lwjglVersion:natives-macos-arm64"
+
+    // Standalone JavaExec smoke tests use sourceSets.main.runtimeClasspath,
+    // not NeoForge's additionalRuntimeClasspath.
+    runtimeOnly "org.lwjgl:lwjgl:$lwjglVersion:natives-macos-arm64"
+    runtimeOnly "org.lwjgl:lwjgl-shaderc:$lwjglVersion:natives-macos-arm64"
+    runtimeOnly "org.lwjgl:lwjgl-spvc:$lwjglVersion:natives-macos-arm64"
 
     // === JarJar Bundled Dependencies (full feature parity) ===
 
