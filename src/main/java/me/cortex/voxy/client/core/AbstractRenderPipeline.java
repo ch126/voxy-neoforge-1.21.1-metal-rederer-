@@ -109,6 +109,8 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
     private int metalDepthWidth;
     private int metalDepthHeight;
     /** Animation counter for the placeholder Metal render — replaced by real Voxy output incrementally. */
+    private static final boolean METAL_DIAGNOSTICS =
+            "1".equals(System.getenv("VOXY_METAL_DIAGNOSTICS"));
     private int metalFrame;
 
     public void runPipeline(Viewport<?> viewport, int sourceFrameBuffer, int srcWidth, int srcHeight) {
@@ -358,7 +360,7 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         // render pass starts. submit() is synchronous in this backend.
         backend.submit();
 
-        if (this.metalFrame % 600 == 300
+        if (METAL_DIAGNOSTICS && this.metalFrame % 600 == 300
                 && viewport instanceof me.cortex.voxy.client.core.rendering.section.backend.mdic.MDICViewport mv) {
             int renderSections = -1;
             int opaque = -1;
