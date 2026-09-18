@@ -58,7 +58,12 @@ void setupScreenspace(in UnpackedNode node) {
                     */
 
 
-    vec3 basePos = vec3(((node.pos<<node.lodLevel)-camSecPos)<<5)-camSubSecPos;
+    // Left-shifting a negative signed integer is undefined. Nodes to the
+    // left/behind/below the camera commonly have negative relative
+    // coordinates; Metal may optimize those shifts differently from GL and
+    // then frustum-cull valid terrain. Multiplication has the intended,
+    // well-defined result for both signs.
+    vec3 basePos = vec3(((node.pos*(1<<node.lodLevel))-camSecPos)*32)-camSubSecPos;
 
     frustumCulled = outsideFrustum(frustum, basePos, float(32<<node.lodLevel));
 
@@ -156,6 +161,11 @@ bool isCulledByHiz() {
     }
     //pointSample = mix(pointSample, pointSample2, pointSample<=0.000001f);
 
+    // Metal currently allocates a zero-filled HiZ pyramid until Minecraft's
+    // GL depth has been mirrored. A zero sample therefore means "no
+    // occlusion data", not "occluded". Without this guard nearly every
+    // valid LOD node is rejected before it reaches MDIC command generation.
+    if (pointSample <= 0.0) return false;
     return pointSample<=minBB.z;
 }
 
