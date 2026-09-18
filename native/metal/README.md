@@ -10,8 +10,9 @@ to OpenGL.
 ## Requirements
 
 - macOS 12+ on Apple Silicon (`arm64`)
-- Xcode command-line tools (`xcode-select --install`)
-- CMake >= 3.20 (`brew install cmake`)
+- Xcode Command Line Tools (`xcode-select --install`); full Xcode is not
+  required because shaders are translated to MSL and compiled at runtime
+- CMake >= 3.20 is optional; `build.sh` falls back to `xcrun clang++`
 - JDK 21 (same JDK Voxy is built against)
 
 ## Build
@@ -32,13 +33,12 @@ The script runs CMake and installs the resulting dylib at:
 `./gradlew build` invokes `buildMetalNative` automatically on macOS aarch64,
 so `./build.sh` is only needed for development iteration outside Gradle.
 
-## Scope (MVP)
+## Scope
 
-This first iteration implements the foundational JNI entry points:
-`MTLDevice`, `MTLCommandQueue`, `MTLBuffer`, `MTLTexture`, blit encoder, event
-primitives, and MSL library/PSO creation. Render encoders, indirect command
-buffers, and the full shader translation pipeline (GLSL → SPIRV → MSL) are
-deferred to the next phases.
+The library implements device/queue management, buffers and textures, blit,
+render and compute encoders, indirect command buffers, IOSurface interop, event
+primitives, and MSL library/pipeline creation. GLSL → SPIR-V → MSL translation
+is performed by the Java runtime through shaderc and SPIRV-Cross.
 
 Handles are opaque `jlong` values holding +1-retained Objective-C pointers.
 The Java side must call `mtlRelease()` to free resources. ARC is enabled in
