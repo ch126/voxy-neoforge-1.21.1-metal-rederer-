@@ -265,6 +265,13 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
                     opaqueDefines.put("VOXY_LOD_FIXED_MIP", "");
                     translucentDefines.put("VOXY_LOD_FIXED_MIP", "");
                 }
+                // The GL pipeline applies fog in its final post pass. Metal
+                // renders directly into the IOSurface, so submersion/effect
+                // fog is mixed in the terrain fragment shader instead.
+                if (this.pipeline.useEnvFog()) {
+                    opaqueDefines.put("USE_ENV_FOG", "");
+                    translucentDefines.put("USE_ENV_FOG", "");
+                }
                 if ("1".equals(System.getenv("VOXY_BAKERY_OFF"))) {
                     opaqueDefines.put("VOXY_NO_ATLAS", "");
                     translucentDefines.put("VOXY_NO_ATLAS", "");
@@ -338,6 +345,7 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
 
     private void uploadUniformBuffer(MDICViewport viewport) {
         long ptr = UploadStream.INSTANCE.upload(this.uniform, 0, 1024);
+        long base = ptr;
         
         var mat = new Matrix4f(viewport.MVP);
         mat.translate(-viewport.innerTranslation.x, -viewport.innerTranslation.y, -viewport.innerTranslation.z);
@@ -361,6 +369,25 @@ public class MDICSectionRenderer extends AbstractSectionRenderer<MDICViewport, B
             earthRadius = 6371000.0f / earthCurveRatio;
         }
         MemoryUtil.memPutFloat(ptr, earthRadius); ptr += 4;
+
+        // SceneUniform offsets 96..127. Air/distance fog stays disabled so
+        // Voxy can render beyond the vanilla wall; NeoForge-captured water,
+        // lava, powder-snow and vision-effect fog uses the vanilla distances.
+        long fogBase = base + 96;
+        var fog = viewport.fogState;
+        if (this.pipeline.useEnvFog() && fog.enabled() && fog.end() - fog.start() > 0.001f) {
+            float inverseRange = 1.0f / (fog.end() - fog.start());
+            MemoryUtil.memPutFloat(fogBase, inverseRange);
+            MemoryUtil.memPutFloat(fogBase + 4, -fog.start() * inverseRange);
+            MemoryUtil.memPutFloat(fogBase + 8, 1.0f);
+            MemoryUtil.memPutFloat(fogBase + 12, 0.0f);
+            MemoryUtil.memPutFloat(fogBase + 16, fog.red());
+            MemoryUtil.memPutFloat(fogBase + 20, fog.green());
+            MemoryUtil.memPutFloat(fogBase + 24, fog.blue());
+            MemoryUtil.memPutFloat(fogBase + 28, 1.0f);
+        } else {
+            MemoryUtil.memSet(fogBase, 0, 32);
+        }
 
         UploadStream.INSTANCE.commit();
     }

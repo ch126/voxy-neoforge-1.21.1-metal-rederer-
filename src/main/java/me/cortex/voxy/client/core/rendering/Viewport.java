@@ -3,6 +3,7 @@ package me.cortex.voxy.client.core.rendering;
 import me.cortex.voxy.client.core.gpu.IGpuBuffer;
 import me.cortex.voxy.client.core.rendering.util.DepthFramebuffer;
 import me.cortex.voxy.client.core.rendering.util.HiZBuffer;
+import me.cortex.voxy.client.core.rendering.util.VoxyFogState;
 // TODO: FogParameters removed in Sodium 0.6.x - fog rendering disabled for now
 // import net.caffeinemc.mods.sodium.client.util.FogParameters;
 import net.minecraft.util.Mth;
@@ -44,6 +45,7 @@ public abstract class Viewport <A extends Viewport<A>> {
     public double cameraX;
     public double cameraY;
     public double cameraZ;
+    public VoxyFogState.Snapshot fogState = VoxyFogState.terrain();
     // Disabled for Sodium 0.6.x compatibility - FogParameters no longer exists
     // @Nullable public FogParameters fogParameters;
 
@@ -99,6 +101,11 @@ public abstract class Viewport <A extends Viewport<A>> {
     public A setScreenSize(int width, int height) {
         this.width = width;
         this.height = height;
+        return (A) this;
+    }
+
+    public A setFogState(VoxyFogState.Snapshot fogState) {
+        this.fogState = fogState;
         return (A) this;
     }
 

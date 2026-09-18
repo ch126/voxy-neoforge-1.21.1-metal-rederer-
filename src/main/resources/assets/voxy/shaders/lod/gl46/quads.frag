@@ -38,6 +38,10 @@ layout(location = 0) in flat uvec4 interData;
 layout(location = 1) in vec2 uv;
 #endif
 
+#ifdef USE_ENV_FOG
+layout(location = 2) in float voxyFogDist;
+#endif
+
 #ifdef DEBUG_RENDER
 layout(location = 7) in flat uint quadDebug;
 #endif
@@ -282,6 +286,14 @@ void main() {
     colour = computeColour(texPos, colour);
     outColour = colour;
 #endif
+
+    #ifdef USE_ENV_FOG
+    if (voxyFogColour.a > 0.0) {
+        float fogLerp = clamp(fma(voxyFogDist, voxyFogEndParams.x, voxyFogEndParams.y),
+                              0.0, voxyFogEndParams.z);
+        outColour.rgb = mix(outColour.rgb, voxyFogColour.rgb, fogLerp * voxyFogColour.a);
+    }
+    #endif
 
     #ifdef DEBUG_RENDER
     uint hash = quadDebug*1231421+123141;

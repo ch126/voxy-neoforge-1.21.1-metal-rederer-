@@ -45,6 +45,11 @@ public class NormalRenderPipeline extends AbstractRenderPipeline {
 
     private final Shader ssaoCompute;
 
+    @Override
+    public boolean useEnvFog() {
+        return this.useEnvFog;
+    }
+
     protected NormalRenderPipeline(AsyncNodeManager nodeManager, NodeCleaner nodeCleaner, HierarchicalOcclusionTraverser traversal, BooleanSupplier frexSupplier) {
         super(nodeManager, nodeCleaner, traversal, frexSupplier, false);
         // The Metal path intentionally skips postOpaquePreTranslucent: it

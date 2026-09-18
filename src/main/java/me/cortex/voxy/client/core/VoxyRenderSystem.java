@@ -235,6 +235,7 @@ public class VoxyRenderSystem {
                 .setModelView(new Matrix4f(matrices.modelView()))
                 .setCamera(cameraX, cameraY, cameraZ)
                 .setScreenSize(width, height)
+                .setFogState(me.cortex.voxy.client.core.rendering.util.VoxyFogState.terrain())
                 // Disabled for Sodium 0.6.x compatibility - FogParameters no longer exists
                 // .setFogParameters(fogParameters)
                 .update();

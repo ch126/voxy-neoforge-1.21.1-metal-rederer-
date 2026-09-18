@@ -12,6 +12,10 @@ layout(binding = 0, std140) readonly buffer SceneUniform {
     uint frameId;
     vec3 cameraSubPos;
     float uEarthRadius; // 0.0 = disabled, otherwise radius in blocks for world curvature
+    // Metal terrain fog. xyz = inverse range, start bias, maximum density;
+    // colour alpha is zero when ordinary air/distance fog must stay disabled.
+    vec4 voxyFogEndParams;
+    vec4 voxyFogColour;
 };
 
 //TODO: see if making the stride 2*4*4 bytes or something cause you get that 16 byte write
@@ -110,4 +114,3 @@ vec4 getLighting(uint index) {
     return texture(lightSampler, clamp((vec2((i2>>4)&0xF, i2&0xF))/15, vec2(8.0f/256), vec2(248.0f/256)));
 }
 #endif
-

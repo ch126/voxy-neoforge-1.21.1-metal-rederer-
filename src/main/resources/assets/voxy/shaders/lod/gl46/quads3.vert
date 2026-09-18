@@ -24,6 +24,10 @@ layout(location = 0) out flat uvec4 interData;
 layout(location = 1) out vec2 uv;
 #endif
 
+#ifdef USE_ENV_FOG
+layout(location = 2) out float voxyFogDist;
+#endif
+
 #ifdef VOXY_METAL_BI_FIX
 // Metal's indexed-indirect draw does not reliably expose baseInstance to the
 // SPIR-V-crossed gl_BaseInstance builtin. The encoder mirrors the command's
@@ -62,6 +66,12 @@ void main() {
 
     //Note: other data is automatically discarded as it is undefiend and has not been generated
     interData = quad.attributeData;
+
+    #ifdef USE_ENV_FOG
+    vec2 cornerMask = vec2((cornerId>>1)&1u, cornerId&1u)*quad.lodScale;
+    vec3 cornerPoint = quad.basePoint + swizzelDataAxis(quad.axis, vec3(quad.quadSizeAddin*cornerMask, 0));
+    voxyFogDist = length(cornerPoint - cameraSubPos);
+    #endif
 
 
     #ifdef DEBUG_RENDER

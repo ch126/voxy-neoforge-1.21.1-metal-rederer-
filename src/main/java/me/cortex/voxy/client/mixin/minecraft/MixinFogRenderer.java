@@ -6,21 +6,16 @@ import org.spongepowered.asm.mixin.Mixin;
 /**
  * MC 1.21.1 compatible fog mixin.
  *
- * This is a placeholder mixin that documents fog handling for NeoForge port.
- * The actual fog manipulation (save-restore pattern) is done in VoxyRenderSystem.renderOpaque()
- * to ensure vanilla terrain renders with normal fog, while Voxy LODs render with fog pushed to infinity.
+ * This remains a placeholder because NeoForge exposes the required 1.21.1
+ * state through {@code ViewportEvent}. VoxyClientEvents captures terrain fog
+ * before moving ordinary air fog beyond the vanilla render distance; the
+ * Metal terrain shader consumes the captured submersion/effect parameters.
  *
  * Render order:
  * 1. setupFog(FOG_TERRAIN) called - fog set to vanilla render distance
- * 2. Vanilla terrain renders - with normal fog
- * 3. Voxy renderOpaque() called:
- *    a. Save current fog values
- *    b. Push fog to infinity (999999.0f)
- *    c. Render LODs without fog wall
- *    d. Restore original fog values
- * 4. Clouds/other elements render - with correct fog
+ * No 1.21.11 Sodium {@code FogParameters} dependency is required.
  */
 @Mixin(FogRenderer.class)
 public class MixinFogRenderer {
-    // No injections needed - VoxyRenderSystem handles fog save-restore directly
+    // No injections needed; see VoxyClientEvents and VoxyFogState.
 }

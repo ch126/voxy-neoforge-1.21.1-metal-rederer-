@@ -61,6 +61,11 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
 
     protected final boolean deferTranslucency;
 
+    /** Whether this pipeline wants terrain fog applied in its output path. */
+    public boolean useEnvFog() {
+        return false;
+    }
+
     private static final int DEPTH_SAMPLER = glGenSamplers();
     static {
         glSamplerParameteri(DEPTH_SAMPLER, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -413,7 +418,10 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
                     + ", renderSections=" + renderSections
                     + ", draws=" + opaque + "/" + translucent + "/" + temporal
                     + ", boundSamples=" + boundNonZeroSamples + ", boundMax=" + boundMax
-                    + ", hiz=" + (METAL_REAL_HIZ ? "real" : "zero"));
+                    + ", hiz=" + (METAL_REAL_HIZ ? "real" : "zero")
+                    + ", fog=" + (viewport.fogState.enabled()
+                            ? viewport.fogState.start() + ".." + viewport.fogState.end()
+                            : "air/off"));
         }
 
         // 5) Render pass against bridge color + Voxy-owned depth. Clears both
