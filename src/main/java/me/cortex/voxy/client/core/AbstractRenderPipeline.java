@@ -429,11 +429,22 @@ public abstract class AbstractRenderPipeline extends TrackedObject {
         //    LOD chunk against a fresh depth buffer — they self-occlude but
         //    don't z-test against MC's foreground terrain). Inside the pass
         //    we call MDIC's Metal-aware renderOpaque equivalent to issue
-        //    the actual LOD draws via the RenderEncoder API. The bridge clear
-        //    color is kept dark (near-black) so any rendered LOD geometry is
-        //    visible against it; if no geometry shows, the strip stays dark.
+        //    the actual LOD draws via the RenderEncoder API. The opaque blit
+        //    compositor replaces the whole far field, including pixels where
+        //    no LOD geometry was drawn. Clear those pixels to Minecraft's
+        //    captured fog/sky colour so they blend into the horizon instead
+        //    of producing a near-black background. Keep the old dark colour
+        //    only as an early-startup fallback before fog colour is captured.
+        float clearR = 0.02f;
+        float clearG = 0.02f;
+        float clearB = 0.04f;
+        if (viewport.fogState != null) {
+            clearR = viewport.fogState.red();
+            clearG = viewport.fogState.green();
+            clearB = viewport.fogState.blue();
+        }
         var pass = me.cortex.voxy.client.core.gpu.RenderPassDesc.builder(fbw, fbh)
-                .clearColor(this.metalBridge.asGpuTexture(), 0.02f, 0.02f, 0.04f, 1.0f)
+                .clearColor(this.metalBridge.asGpuTexture(), clearR, clearG, clearB, 1.0f)
                 .clearDepth(this.metalDepthTex, 1.0f)
                 .build();
         try (var enc = backend.beginRenderPass(pass)) {
