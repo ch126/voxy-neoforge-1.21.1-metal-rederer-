@@ -47,6 +47,11 @@ sourceSets {
             // Sodium config integration mixin
             exclude 'me/cortex/voxy/client/mixin/sodium/MixinVideoSettingsScreen.java'
 
+            // Legacy Sodium Options API integration targets Sodium 0.6.x's GUI
+            // classes. Sodium 0.8 uses its Config API; the native NeoForge
+            // config screen remains available until that optional UI is ported.
+            exclude 'me/cortex/voxy/client/config/VoxySodiumOptions.java'
+
             // Blaze3D OpenGL debug mixin (GlDebug class not accessible in MC 1.21.1)
             exclude 'me/cortex/voxy/client/mixin/minecraft/MixinGlDebug.java'
 
@@ -75,7 +80,7 @@ repositories {
         forRepository {
             maven {
                 name "caffeinemcRepository"
-                url "https://maven.caffeinemc.net/snapshots"
+                url "https://maven.caffeinemc.net/releases"
             }
         }
         filter {
@@ -239,8 +244,10 @@ dependencies {
     // Forgified Fabric API for compatibility (includes Fabric Loader API)
     implementation "org.sinytra.forgified-fabric-api:forgified-fabric-api:${project.forgified_fabric_version}"
 
-    // Sodium for NeoForge (0.6.13 - latest for MC 1.21.1)
-    implementation "maven.modrinth:sodium:mc1.21.1-0.6.13-neoforge"
+    // Sodium for NeoForge. Keep this aligned with the runtime modpack.
+    // Sodium's public NeoForge download is a service-loader shell whose actual
+    // implementation is nested. Compile against the official unwrapped mod.
+    implementation "net.caffeinemc:sodium-neoforge-mod:0.8.13+mc1.21.1"
 
     // Lithium for NeoForge (0.15.1 - latest for MC 1.21.1)
     implementation("maven.modrinth:lithium:mc1.21.1-0.15.1-neoforge")
@@ -407,9 +414,41 @@ repositories {
 // Configuration to download LWJGL natives for repackaging
 configurations {
     lwjglNativesRaw
+    sodiumShell {
+        transitive = false
+    }
+}
+
+// Sodium 0.8's NeoForge distribution is a service-loader shell containing an
+// embedded implementation JAR. The dev runtime already loads the official
+// unwrapped -mod artifact, so retain only the shell's bootstrap/workaround
+// classes and expose them as a plain library.
+tasks.register('stripSodiumShell', Jar) {
+    archiveBaseName = 'voxy-sodium-neoforge-shell-lib'
+    archiveVersion = '0.8.13-mc1.21.1'
+    destinationDirectory = layout.buildDirectory.dir('sodium-shell-lib')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from { configurations.sodiumShell.collect { zipTree(it) } }
+    exclude 'META-INF/MANIFEST.MF'
+    exclude 'META-INF/neoforge.mods.toml'
+    exclude 'META-INF/jarjar/**'
+    exclude 'META-INF/services/net.neoforged.neoforgespi.locating.IModFileCandidateLocator'
+    manifest {
+        attributes(
+                'FMLModType': 'LIBRARY',
+                'Automatic-Module-Name': 'sodium_service'
+        )
+    }
+}
+
+tasks.matching { it.name == 'prepareClientRun' }.configureEach {
+    dependsOn tasks.named('stripSodiumShell')
 }
 
 dependencies {
+    sodiumShell "maven.modrinth:sodium:mc1.21.1-0.8.13-neoforge"
+    additionalRuntimeClasspath files(tasks.named('stripSodiumShell'))
+
     // Download natives for repackaging (module-info.class will be stripped)
     lwjglNativesRaw "org.lwjgl:lwjgl-lmdb:$lwjglVersion:natives-windows"
     lwjglNativesRaw "org.lwjgl:lwjgl-zstd:$lwjglVersion:natives-windows"
