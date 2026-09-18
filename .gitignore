@@ -4,6 +4,7 @@
 /build/
 /run/
 /out/
+/bin/
 /logs/
 
 # Reference dependency clones for development
