@@ -12,12 +12,10 @@ import me.cortex.voxy.common.voxelization.WorldConversionFactory;
 import me.cortex.voxy.common.world.WorldEngine;
 import me.cortex.voxy.common.world.WorldUpdater;
 import net.minecraft.core.Holder;
-import net.minecraft.core.IdMap;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtOps;
-import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
@@ -26,7 +24,6 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.DataLayer;
 import net.minecraft.world.level.chunk.PalettedContainer;
-import net.minecraft.world.level.chunk.PalettedContainer.Strategy;
 import net.minecraft.world.level.chunk.PalettedContainerRO;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.chunk.storage.RegionFileVersion;
@@ -47,8 +44,6 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
-import java.util.function.Predicate;
 
 public class WorldImporter implements IDataImporter {
     private final WorldEngine world;
@@ -68,56 +63,22 @@ public class WorldImporter implements IDataImporter {
         this.world = worldEngine;
         this.service = sm.createService(()->new Pair<>(()->this.jobQueue.poll().run(), ()->{}), 3, "World importer", runChecker);
 
-        var biomeRegistry = mcWorld.registryAccess().lookupOrThrow(Registries.BIOME);
-        var defaultBiome = biomeRegistry.getOrThrow(Biomes.PLAINS);
-        this.defaultBiomeProvider = new PalettedContainerRO<>() {
-            @Override
-            public Holder<Biome> get(int x, int y, int z) {
-                return defaultBiome;
-            }
-
-            @Override
-            public void getAll(Consumer<Holder<Biome>> action) {
-
-            }
-
-            @Override
-            public void write(FriendlyByteBuf buf) {
-
-            }
-
-            @Override
-            public int getSerializedSize() {
-                return 0;
-            }
-
-            // MC 1.21.1: bitsPerEntry() and copy() removed from interface - methods deleted
-
-            @Override
-            public boolean maybeHas(Predicate<Holder<Biome>> predicate) {
-                return false;
-            }
-
-            @Override
-            public void count(PalettedContainer.CountConsumer<Holder<Biome>> counter) {
-
-            }
-
-            @Override
-            public PalettedContainer<Holder<Biome>> recreate() {
-                return null;
-            }
-
-            @Override
-            public PackedData<Holder<Biome>> pack(IdMap<Holder<Biome>> idMap, Strategy strategy) {
-                return null;
-            }
-        };
-
-        // MC 1.21.1: PalettedContainerFactory removed - need to find correct codec creation API
-        // TODO: Fix codec creation for PalettedContainer in MC 1.21.1
-        this.biomeCodec = null; // Placeholder
-        this.blockStateCodec = null; // Placeholder
+        var biomeRegistry = mcWorld.registryAccess().registryOrThrow(Registries.BIOME);
+        var defaultBiome = biomeRegistry.getHolderOrThrow(Biomes.PLAINS);
+        this.defaultBiomeProvider = new PalettedContainer<>(
+                biomeRegistry.asHolderIdMap(),
+                defaultBiome,
+                PalettedContainer.Strategy.SECTION_BIOMES);
+        this.biomeCodec = PalettedContainer.codecRO(
+                biomeRegistry.asHolderIdMap(),
+                biomeRegistry.holderByNameCodec(),
+                PalettedContainer.Strategy.SECTION_BIOMES,
+                defaultBiome);
+        this.blockStateCodec = PalettedContainer.codecRW(
+                Block.BLOCK_STATE_REGISTRY,
+                BlockState.CODEC,
+                PalettedContainer.Strategy.SECTION_STATES,
+                Blocks.AIR.defaultBlockState());
     }
 
 
