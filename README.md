@@ -1,19 +1,10 @@
-# Voxy NeoForge Metal (Experimental)
+# Voxy NeoForge Metal
 
-**Experimental Voxy Metal backend port for Minecraft 1.21.1, NeoForge 21.1.x, Java 21 and Apple Silicon.**
+> **Experimental Apple Silicon Metal backend port** of Voxy for Minecraft 1.21.1 + NeoForge 21.1.x
 
-This repository is an experimental port of Voxy's Apple Silicon Metal rendering backend to Minecraft 1.21.1 and NeoForge 21.1.x. It combines the NeoForge 1.21.1 port of Voxy with the GPU abstraction, Metal renderer, JNI bindings and IOSurface interoperability developed by the Voxy M-series support project.
+This repository is an experimental port of Voxy's Apple Silicon **Metal** rendering backend to Minecraft 1.21.1 and NeoForge 21.1.x. It combines the community NeoForge 1.21.1 port of Voxy with the GPU abstraction layer, Metal renderer, JNI bindings and IOSurface interoperability originally developed by the Voxy M-series support project.
 
-**Current target:**
-- Minecraft 1.21.1
-- NeoForge 21.1.x
-- Java 21
-- Sodium 0.8.13
-- Apple Silicon, tested on Apple M5 Pro
-- Metal rendering for Voxy distant LODs
-- OpenGL/Metal interoperability through IOSurface
-
-The Java integration, Metal native library loading, JNI initialization, IOSurface compositing and Metal LOD draw submission have been validated in a real Minecraft instance. This remains an experimental development build and is not an official Voxy release.
+The Java integration, Metal native library loading, JNI initialization, IOSurface compositing and Metal LOD draw submission have been validated in a real Minecraft instance. **This remains an experimental development build and is not an official Voxy release.**
 
 ## 中文说明
 
@@ -21,106 +12,101 @@ The Java integration, Metal native library loading, JNI initialization, IOSurfac
 
 ---
 
-# Voxy NeoForge 1.21.1
+## Current Target
 
-> **Unofficial NeoForge port** of the Voxy mod
+| Component | Version |
+|---|---|
+| Minecraft | 1.21.1 |
+| NeoForge | 21.1.x |
+| Java | 21 |
+| Sodium | 0.8.13 (NeoForge) |
+| Platform | Apple Silicon (tested on Apple M5 Pro) |
 
-## Special Thanks
-
-**All credit for Voxy goes to [MCRcortex](https://github.com/MCRcortex)**, the original author and creator of this incredible LOD rendering mod.
-
-- **Original Repository:** [MCRcortex/voxy](https://github.com/MCRcortex/voxy)
-- **Original Author:** [MCRcortex](https://github.com/MCRcortex)
-
-This repository is a community port to NeoForge 1.21.1, created because the original author has indicated they will not be backporting to this version. We are deeply grateful for MCRcortex's work on Voxy.
-
-## License Notice
-
-The original Voxy mod is licensed under **All Rights Reserved** by MCRcortex. This port is provided for personal use. Please respect the original author's licensing terms.
-
----
-
-## About
-
-**Voxy** is a Level-of-Detail (LOD) rendering mod for Minecraft that extends your view distance far beyond vanilla limits by rendering distant terrain at lower detail levels.
-
-## Why This Port?
-
-You might wonder: "Why not just use the Fabric version with [Sinytra Connector](https://github.com/Sinytra/Connector)?"
-
-| Aspect | Native NeoForge Port (this repo) | Sinytra Connector |
-|--------|----------------------------------|-------------------|
-| **Performance** | No translation overhead | Runtime translation layer |
-| **Mod Integration** | Native NeoForge API calls | Fabric API emulation via FFAPI |
-| **Maintenance** | Must track upstream Voxy changes | Just drop in Fabric jar |
-| **Stability** | Tested against NeoForge directly | May have edge cases from translation |
-| **Dependencies** | Forgified Fabric API | Connector + Forgified Fabric API |
-
-**Bottom line:** For a performance-critical LOD mod like Voxy, eliminating the translation layer overhead is worthwhile. If you prioritize simplicity and don't mind potential overhead, Sinytra Connector is a valid alternative.
+**Rendering path:** Metal is used to render Voxy's distant LOD terrain, with OpenGL/Metal interoperability handled through IOSurface compositing.
 
 ## Status
 
-**Alpha** - Functional with known limitations.
+**Experimental / Alpha** — functional on real hardware, but still under active development.
 
-### Working Features
-- LOD terrain rendering beyond vanilla render distance
-- Smooth transitions between LOD and vanilla chunks
-- Fog integration (disabled at LOD boundaries)
-- Block model baking for all render types (solid, cutout, cutout_mipped, translucent)
-- Delayed chunk unloading to prevent pop-out effects
+### Validated
+- Metal native library loading and JNI bridge initialization
+- IOSurface-based OpenGL ↔ Metal compositing
+- Metal LOD draw submission and frustum/HiZ culling
+- LOD terrain rendering beyond vanilla render distance on Apple Silicon
+- Sodium 0.8.13 runtime compatibility
 
-### Current Limitations
-- Requires Sodium 0.6.13+ (NeoForge version)
+### Known Limitations
+- macOS / Apple Silicon only — no Windows/Linux Metal path (those platforms should use upstream Voxy's normal OpenGL renderer)
 - Some optional integrations not yet ported (Iris, Nvidium, Vivecraft)
 - Debug screen integration disabled (MC 1.21.1 API changes)
+- Expect rough edges typical of an experimental native-backend port
+
+See [`docs/STATUS.md`](docs/STATUS.md), [`docs/NEOFORGE-METAL-VALIDATION.md`](docs/NEOFORGE-METAL-VALIDATION.md) and [`docs/M-SERIES-PORT-STATE.md`](docs/M-SERIES-PORT-STATE.md) for detailed, up-to-date progress notes.
 
 ## Requirements
 
-### Required Dependencies
-
 | Dependency | Version | Link |
-|------------|---------|------|
+|---|---|---|
 | Minecraft | 1.21.1 | - |
-| NeoForge | 21.1.x | [NeoForge](https://neoforged.net/) |
-| Sodium | mc1.21.1-0.6.13-neoforge | [Modrinth](https://modrinth.com/mod/sodium/version/mc1.21.1-0.6.13-neoforge) |
-| Forgified Fabric API | 0.116.7+2.2.0+1.21.1 | [Modrinth](https://modrinth.com/mod/forgified-fabric-api/version/0.116.7+2.2.0+1.21.1) |
+| NeoForge | 21.1.x | [neoforged.net](https://neoforged.net/) |
+| Sodium | 0.8.13 (NeoForge) | [Modrinth](https://modrinth.com/mod/sodium) |
+| Forgified Fabric API | latest compatible with 1.21.1 | [Modrinth](https://modrinth.com/mod/forgified-fabric-api) |
 
-### Recommended Dependencies
+### Recommended
 
-| Dependency | Purpose | Link |
-|------------|---------|------|
-| Reese's Sodium Options | Better settings UI for Sodium + Voxy config access | [Modrinth](https://modrinth.com/mod/reeses-sodium-options) |
-| Lithium | General performance improvements | [Modrinth](https://modrinth.com/mod/lithium) |
-
-## Installation
-
-> **Note:** Due to Voxy's ARR (All Rights Reserved) license, compiled JARs are not distributed. You must build from source.
-
-1. Install NeoForge for Minecraft 1.21.1
-2. Install required dependencies (see above)
-3. Build Voxy from source (see below)
-4. Place the built JAR in your `mods` folder
+| Dependency | Purpose |
+|---|---|
+| Reese's Sodium Options | Better settings UI, Sodium + Voxy config access |
+| Lithium | General performance improvements |
 
 ## Building from Source
 
+> Due to Voxy's ARR (All Rights Reserved) upstream license, compiled JARs are not distributed. You must build from source.
+
 ```bash
-git clone https://github.com/j-shelfwood/voxy-neoforge.git
-cd voxy-neoforge
+git clone https://github.com/ch126/voxy-neoforge-1.21.1-metal-rederer-.git
+cd voxy-neoforge-1.21.1-metal-rederer-
 ./gradlew build
 ```
 
-The built JAR will be in `build/libs/`.
+The built JAR will be in `build/libs/`. Building/loading the Metal native library additionally requires Xcode Command Line Tools on macOS — see [`docs/METAL-MIGRATION.md`](docs/METAL-MIGRATION.md).
 
-## Contributing
+## Testing
 
-For development guidelines, see [CLAUDE.md](CLAUDE.md).
+See [`TESTING.md`](TESTING.md) for a full setup walkthrough (Prism Launcher instance creation, Java/JVM configuration, mod installation).
 
-### Validation Scripts
+## Documentation
 
-The `scripts/` directory contains build validation tools used in CI.
+| Doc | Contents |
+|---|---|
+| [`docs/M-SERIES-PORT-OVERVIEW.md`](docs/M-SERIES-PORT-OVERVIEW.md) | High-level overview of the Apple Silicon / Metal port |
+| [`docs/M-SERIES-PORT-STATE.md`](docs/M-SERIES-PORT-STATE.md) | Current implementation state |
+| [`docs/METAL-MIGRATION.md`](docs/METAL-MIGRATION.md) | Migration notes from OpenGL to Metal |
+| [`docs/VX-CONTRACT-METAL-DESIGN.md`](docs/VX-CONTRACT-METAL-DESIGN.md) | GPU abstraction / contract design |
+| [`docs/NEOFORGE-METAL-VALIDATION.md`](docs/NEOFORGE-METAL-VALIDATION.md) | Real-instance validation results |
+| [`docs/LOD-FLICKER-INVESTIGATION.md`](docs/LOD-FLICKER-INVESTIGATION.md) | LOD flicker root-cause investigation |
+| [`docs/WATER-LOD-FIX-HANDOFF.md`](docs/WATER-LOD-FIX-HANDOFF.md) | Water LOD fix handoff notes |
+| [`docs/MIGRATION-HISTORY.md`](docs/MIGRATION-HISTORY.md) | Full migration/change history |
+| [`docs/STATUS.md`](docs/STATUS.md) | Overall project status |
+| [`CLAUDE.md`](CLAUDE.md) | Development guidelines for AI-assisted contributions |
 
-## Links
+## Why a Native NeoForge Port?
 
-- **Original Voxy:** [github.com/MCRcortex/voxy](https://github.com/MCRcortex/voxy)
-- **This Port:** [github.com/j-shelfwood/voxy-neoforge](https://github.com/j-shelfwood/voxy-neoforge)
-- **Sinytra Connector (alternative):** [github.com/Sinytra/Connector](https://github.com/Sinytra/Connector)
+The base NeoForge port (before the Metal backend) exists because upstream Voxy targets Fabric and the original author has indicated no plans to backport to NeoForge. Rather than relying on a Fabric-to-Forge translation layer like [Sinytra Connector](https://github.com/Sinytra/Connector), this project ports Voxy natively:
+
+| Aspect | Native NeoForge Port (this repo) | Sinytra Connector |
+|---|---|---|
+| Performance | No translation overhead | Runtime translation layer |
+| Mod Integration | Native NeoForge API calls | Fabric API emulation via FFAPI |
+| Maintenance | Must track upstream Voxy changes | Just drop in Fabric jar |
+| Stability | Tested directly against NeoForge | May have translation edge cases |
+
+## Special Thanks
+
+**All credit for Voxy goes to [MCRcortex](https://github.com/MCRcortex)**, the original author and creator of this LOD rendering mod, and to the Voxy M-series support project for the original Metal/JNI/IOSurface backend work this port builds on.
+
+- **Original Voxy repository:** [github.com/MCRcortex/voxy](https://github.com/MCRcortex/voxy)
+
+## License Notice
+
+The original Voxy mod is licensed under **All Rights Reserved** by MCRcortex. This port is provided for personal, non-commercial use. Please respect the original author's licensing terms. No compiled binaries are distributed from this repository.
