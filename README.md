@@ -1,3 +1,26 @@
+# Voxy NeoForge Metal (Experimental)
+
+**Experimental Voxy Metal backend port for Minecraft 1.21.1, NeoForge 21.1.x, Java 21 and Apple Silicon.**
+
+This repository is an experimental port of Voxy's Apple Silicon Metal rendering backend to Minecraft 1.21.1 and NeoForge 21.1.x. It combines the NeoForge 1.21.1 port of Voxy with the GPU abstraction, Metal renderer, JNI bindings and IOSurface interoperability developed by the Voxy M-series support project.
+
+**Current target:**
+- Minecraft 1.21.1
+- NeoForge 21.1.x
+- Java 21
+- Sodium 0.8.13
+- Apple Silicon, tested on Apple M5 Pro
+- Metal rendering for Voxy distant LODs
+- OpenGL/Metal interoperability through IOSurface
+
+The Java integration, Metal native library loading, JNI initialization, IOSurface compositing and Metal LOD draw submission have been validated in a real Minecraft instance. This remains an experimental development build and is not an official Voxy release.
+
+## 中文说明
+
+将 Voxy 的 Apple Silicon Metal 渲染后端移植到 Minecraft 1.21.1 + NeoForge 21.1.x。项目包含 GPU 抽象层、Metal 后端、JNI 原生桥接以及 IOSurface OpenGL/Metal 互操作，已在 Apple M5 Pro 上完成实机验证。本项目属于实验性移植，并非 Voxy 官方版本。
+
+---
+
 # Voxy NeoForge 1.21.1
 
 > **Unofficial NeoForge port** of the Voxy mod
